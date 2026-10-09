@@ -39,7 +39,7 @@
       <li>広めの場所で、周囲の安全を確認してから開始してください。</li>
       <li><b>自動モード</b>：ドローンが部屋の中を自由に飛び回ります。</li>
       <li><b>手動モード</b>：左スティック＝上下・旋回、右スティック＝前後・左右。</li>
-      <li><b>A</b>＝自動/手動切替　<b>B</b>＝離陸/着陸　<b>右トリガー長押し</b>＝手元へ呼び戻し　<b>X</b>＝HUD表示切替</li>
+      <li><b>A</b>＝自動/手動切替　<b>B</b>＝離陸/着陸　<b>右トリガー長押し</b>＝手元へ呼び戻し　<b>X</b>＝HUD表示切替　<b>左トリガー</b>＝ドローン視点</li>
       <li>コントローラーなし（ハンドトラッキング）の場合は自動モードで飛行します。ピンチで離着陸。</li>
     </ul>
     <button id="btn" type="button">MRを開始</button>
@@ -70,6 +70,12 @@ const C = Object.freeze({
   BOX_X: 3, BOX_Y: 2, BOX_Z: 3,            // 平面が無い場合の部屋
   HUD_HZ: 5, AUTO_TAKEOFF_DELAY: 4,
   ROOM_REFRESH: 1.0,
+  FPV_HZ: 30,                              // ドローン視点モニターの更新頻度 [Hz]
+  FPV_FOV: 95, FPV_DOWN_DEG: 8,            // FPVカメラの画角 [deg] / 固定の下向き角 [deg]
+  FPV_TILT_FOLLOW: 0.35,                   // 機体の実ピッチ/ロールをFPV映像へ混ぜる割合 (0=水平固定, 1=機体と同じ)
+  FPV_RT_W: 512, FPV_RT_H: 288,            // モニター用レンダーターゲット解像度
+  MON_W: 0.18,                             // モニター画面の幅 [m] (高さは16:9)
+  MON_GRID: 0.5,                           // 部屋モデルのグリッド間隔 [m]
 });
 
 /* =====================================================================
@@ -216,7 +222,7 @@ const pidVx = new PID(3.5, 1.2, 0, 1.5), pidVz = new PID(3.5, 1.2, 0, 1.5), pidV
 
 // 入力 (スティックは整形済み)
 const input = { lx: 0, ly: 0, rx: 0, ry: 0, recall: false, hasController: false };
-const prevBtn = { A: false, B: false, X: false };
+const prevBtn = { A: false, B: false, X: false, L: false };
 
 // ユーザーの頭
 const head = { pos: new THREE.Vector3(0, 1.6, 0), fwd: new THREE.Vector3(0, 0, -1), fwdH: new THREE.Vector3(0, 0, -1), quat: new THREE.Quaternion(), valid: false };
@@ -227,15 +233,15 @@ const auto = { wp: new THREE.Vector3(), phase: 0 /*0=移動 1=ホバー*/, until
 /* =====================================================================
  * 5. 部屋 (平面検出 / フォールバック)
  * ===================================================================== */
-const planes = [];                 // {xr,m,inv,n,horiz,y,minX,maxX,minZ,maxZ,lastChanged,seen}
+const planes = [];                 // {xr,m,inv,n,horiz,y,minX,maxX,minZ,maxZ,lastChanged,seen,poly,label}
 const planeMap = new Map();
 const room = { min: new THREE.Vector3(-1.5, 0, -1.5), max: new THREE.Vector3(1.5, 2, 1.5), floorY: 0, fromPlanes: false };
 const startCenter = new THREE.Vector3();
-let planeFeature = false, roomTimer = 0;
+let planeFeature = false, roomTimer = 0, planesRev = 0;   // planesRev: 平面の追加/削除/形状変更のたびに+1 (部屋モデルの再構築判定用)
 
 function makePlane(xp) {
   return { xr: xp, m: new THREE.Matrix4(), inv: new THREE.Matrix4(), n: new THREE.Vector3(0, 1, 0), horiz: true, y: 0,
-    minX: -0.5, maxX: 0.5, minZ: -0.5, maxZ: 0.5, lastChanged: -1, seen: true, valid: false, side: 0 };
+    minX: -0.5, maxX: 0.5, minZ: -0.5, maxZ: 0.5, lastChanged: -1, seen: true, valid: false, side: 0, poly: null, label: '', bm: new Float32Array(16) };   // bm: 部屋モデルを最後に作った時の姿勢
 }
 
 function setFallbackRoom() {
@@ -263,6 +269,10 @@ function updatePlanes(frame, refSpace) {
       let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
       for (let k = 0; k < poly.length; k++) { const p = poly[k]; if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.z < z0) z0 = p.z; if (p.z > z1) z1 = p.z; }
       if (poly.length) { pl.minX = x0; pl.maxX = x1; pl.minZ = z0; pl.maxZ = z1; }
+      pl.label = xp.semanticLabel || '';                                // 'floor' 'wall' 'ceiling' 'table' ... (Quest) / 無ければ ''
+      const pn = poly.length, pp = new Float32Array(pn * 2);            // 部屋モデル用に局所XZを保持 (平面更新時のみ確保)
+      for (let k = 0; k < pn; k++) { pp[k * 2] = poly[k].x; pp[k * 2 + 1] = poly[k].z; }
+      pl.poly = pp;
     }
     pl.m.fromArray(pose.transform.matrix);
     pl.inv.copy(pl.m).invert();
@@ -276,7 +286,7 @@ function updatePlanes(frame, refSpace) {
   for (let i = planes.length - 1; i >= 0; i--) {
     if (!planes[i].seen) { planeMap.delete(planes[i].xr); planes.splice(i, 1); changed = true; }
   }
-  if (changed) roomTimer = 0;
+  if (changed) { roomTimer = 0; planesRev++; }
 }
 
 /** 平面群から床高さ・天井・AABBを再計算 */
@@ -651,6 +661,7 @@ const hudCtx = hudCv.getContext('2d');
 const hudTex = new THREE.CanvasTexture(hudCv); hudTex.colorSpace = THREE.SRGBColorSpace;
 const hudMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.12), new THREE.MeshBasicMaterial({ map: hudTex, transparent: true, depthTest: false }));
 hudMesh.renderOrder = 999;
+const HUD_GRIP_Y = 0.07, HUD_GRIP_RX = -Math.PI / 2 + 0.5;   // 左グリップ上のHUD位置/傾き (モニターも同じ平面を使う)
 const hud = { acc: 0, alt: -1, spd: -1, mode: -1, state: -1, noPlane: null, ctrl: null, on: null, leftGrip: null, hudInit: false };
 
 function drawHud(alt, spd, noPlane, ctrl) {
@@ -664,17 +675,18 @@ function drawHud(alt, spd, noPlane, ctrl) {
   x.fillText('モード: ' + MODE_NAMES[sim.mode] + '  /  ' + STATE_NAMES[sim.state], 18, 14);
   x.fillStyle = '#ffffff'; x.font = 'bold 32px sans-serif';
   x.fillText('高度 ' + (alt / 100).toFixed(2) + ' m   速度 ' + (spd / 10).toFixed(1) + ' m/s', 18, 62);
-  x.fillStyle = '#b8c6d6'; x.font = '21px sans-serif';
+  x.fillStyle = '#b8c6d6'; x.font = '20px sans-serif';
   if (ctrl) {
-    x.fillText('左: 上下=昇降 / 左右=旋回', 18, 112);
-    x.fillText('右: 前後=前進後退 / 左右=横移動', 18, 138);
-    x.fillText('A=自動/手動  B=離着陸  X=HUD', 18, 164);
-    x.fillText('右トリガー長押し=手元へ呼び戻し', 18, 190);
+    x.fillText('左: 上下=昇降 / 左右=旋回', 18, 104);
+    x.fillText('右: 前後=前進後退 / 左右=横移動', 18, 128);
+    x.fillText('A=自動/手動  B=離着陸  X=HUD', 18, 152);
+    x.fillText('右トリガー長押し=手元へ呼び戻し', 18, 176);
+    x.fillText('左トリガー=ドローン視点', 18, 200);
   } else {
     x.fillText('コントローラー未検出: 自動モード', 18, 112);
     x.fillText('ピンチ(選択)で離陸/着陸', 18, 138);
   }
-  if (noPlane) { x.fillStyle = '#ffd479'; x.font = '20px sans-serif'; x.fillText('平面なし: スペース設定で精度向上', 18, 220); }
+  if (noPlane) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText('平面なし: スペース設定で精度向上', 18, 226); }
   hudTex.needsUpdate = true;
 }
 
@@ -701,13 +713,18 @@ function placeHud() {
     hudMesh.scale.setScalar(sc);
     hudMesh.position.set(-hw + 0.12 * sc + 0.02, -hh + 0.06 * sc + 0.02, -d);
   }
-  else if (hud.leftGrip) { hud.leftGrip.add(hudMesh); hudMesh.position.set(0, 0.07, 0.0); hudMesh.rotation.x = -Math.PI / 2 + 0.5; }
+  else if (hud.leftGrip) { hud.leftGrip.add(hudMesh); hudMesh.position.set(0, HUD_GRIP_Y, 0.0); hudMesh.rotation.x = HUD_GRIP_RX; }
   else scene.add(hudMesh);
+  placeMonitor();
 }
 function updateHudFloat() {
   if (renderer.xr.isPresenting && !hud.leftGrip && head.valid) {
     hudMesh.position.copy(head.pos).addScaledVector(head.fwd, 0.6); hudMesh.position.y -= 0.22;
     hudMesh.lookAt(head.pos);
+    // モニターはHUDの左隣 (HUDが非表示でも同じ位置)
+    monMesh.quaternion.copy(hudMesh.quaternion);
+    tmpV.set(-(0.12 + MON_GAP + MON_BZ.l + C.MON_W / 2), 0, 0).applyQuaternion(hudMesh.quaternion);
+    monMesh.position.copy(hudMesh.position).add(tmpV);
   }
 }
 
@@ -719,7 +736,268 @@ for (let i = 0; i < 2; i++) {
 }
 
 /* =====================================================================
- * 12. サウンド (Web Audio, 手続き生成)
+ * 12. ドローン視点モニター (FPVピクチャインピクチャ)
+ *   パススルーの実景はヘッドセット側の映像なのでドローン視点の「実景」は作れない。
+ *   代わりに、検出済み平面(無ければフォールバック箱)から作った「部屋モデル」を
+ *   ドローンのカメラから描画し、ユーザーの位置マーカーを重ねて左手元の小画面に映す。
+ *   ・部屋モデルとユーザーマーカーはメインとは別の monScene に置く (メインの scene には入れない)。
+ *     同じ scene を別カメラで描くと、three はライト構成の変化(2灯⇔0灯)を毎回検出して全ライティング材質の
+ *     プログラム照合をやり直す (WebGLLights の state.version)。別シーンならレンダーステートが独立し、走査も最小。
+ *     念のため layer 3 のみにもしてある (WebXRManager は左目=layer1 / 右目=layer2 を使うので避ける)。
+ *   ・部屋モデルは MeshBasic/LineBasic (ライト不要) で、部屋データが変わった時だけ作り直す。
+ * ===================================================================== */
+const MON_LAYER = 3;
+const MON_H = C.MON_W * 9 / 16;                              // 画面の高さ (16:9)
+const MON_GAP = 0.012;                                       // HUDとの間隔 [m]
+const MON_BZ = { l: 0.006, r: 0.006, b: 0.006, t: 0.016 };   // ベゼル幅 (上辺は「ドローン視点」の字幕帯)
+const MON_BG = 0x0d141c;                                     // モニター背景 (クリア色)
+const setLayer = (obj, l) => { obj.traverse((o) => o.layers.set(l)); return obj; };
+
+const mon = { on: false, acc: 0, built: false, check: false, cool: 0, rev: -1, fromPlanes: false, floorY: 0, box: new Float32Array(6) };
+const monScene = new THREE.Scene(); monScene.name = 'monitorScene';   // FPV専用シーン (ライト無し・背景無し)
+
+// 512x288。レンダーターゲットのテクスチャは本来リニアだが、SRGBColorSpace を指定すると SRGB8_ALPHA8 で確保され、
+// 書き込み時にGPUがsRGB符号化・サンプリング時に復号する (r170: 通常RTのシェーダ出力色空間はリニア固定)。
+// → 暗部の階調が潰れず、画面上の色は部屋モデルの意図した色になる。
+// samples は 0 (MSAA無し)。Quest は WEBGL_multisampled_render_to_texture を持つため、samples>0 の通常RTは three r170 で
+// その拡張経路 (WebGLTextures.useMultisampledRTT) になる。three 自身が「フレーム途中のフラッシュがあると正しく動かない」として
+// XR側では無効化している経路なので、XRフレームの途中で描くこのRTでは使わない (多少のジャギーは許容)。
+const monRT = new THREE.WebGLRenderTarget(C.FPV_RT_W, C.FPV_RT_H, { depthBuffer: true, samples: 0, colorSpace: THREE.SRGBColorSpace });
+// ミップマップ有り: 手元の画面はRTより小さく映ることが多く、ミップ無しだと1pxのグリッド線が縮小でちらつく/潰れる (描画ごとに generateMipmap、512x288なので軽い)
+monRT.texture.generateMipmaps = true;
+monRT.texture.minFilter = THREE.LinearMipmapLinearFilter;
+
+const fpvCam = new THREE.PerspectiveCamera(C.FPV_FOV, 16 / 9, 0.03, 30);   // シーンには追加しない (ドローンの子ではない)
+fpvCam.layers.set(MON_LAYER);
+
+// --- 画面本体 (ベゼル + 画面 + 字幕)。HUD同様 depthTest 無し + renderOrder で重ね順を固定 ---
+// transparent:true は必須: 不透明パスは透明パスより先に描かれるので、不透明のままだと奥にあるローターディスクや影(透明)が
+// モニターの上に描かれてしまう。HUD(999)と同じ透明パスに入れ、renderOrder 989-992 で HUD の直前に描く (不透明度は1のまま)。
+function createCaptionTexture() {
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 40;
+  const x = cv.getContext('2d');
+  x.textBaseline = 'middle'; x.fillStyle = '#38d39f'; x.font = 'bold 28px sans-serif';
+  x.fillText('ドローン視点', 4, 21);
+  const t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const monMesh = new THREE.Group(); monMesh.name = 'droneMonitor'; monMesh.visible = false;
+{
+  const flat = (color) => new THREE.MeshBasicMaterial({ color, transparent: true, depthTest: false, depthWrite: false, toneMapped: false });
+  const bw = C.MON_W + MON_BZ.l + MON_BZ.r, bh = MON_H + MON_BZ.b + MON_BZ.t, cx = (MON_BZ.r - MON_BZ.l) / 2, cy = (MON_BZ.t - MON_BZ.b) / 2;
+  const rim = new THREE.Mesh(new THREE.PlaneGeometry(bw + 0.003, bh + 0.003), flat(0x1f7a5c)); rim.position.set(cx, cy, 0); rim.renderOrder = 989; monMesh.add(rim);
+  const bezel = new THREE.Mesh(new THREE.PlaneGeometry(bw, bh), flat(0x080c11)); bezel.position.set(cx, cy, 0.0002); bezel.renderOrder = 990; monMesh.add(bezel);
+  const screenMat = new THREE.MeshBasicMaterial({ map: monRT.texture, transparent: true, toneMapped: false, depthTest: false, depthWrite: false });
+  const screen = new THREE.Mesh(new THREE.PlaneGeometry(C.MON_W, MON_H), screenMat); screen.position.z = 0.0004; screen.renderOrder = 991; monMesh.add(screen);
+  const capH = 0.0115, capW = capH * 256 / 40;
+  const cap = new THREE.Mesh(new THREE.PlaneGeometry(capW, capH), new THREE.MeshBasicMaterial({ map: createCaptionTexture(), transparent: true, depthTest: false, depthWrite: false, toneMapped: false }));
+  cap.position.set(-C.MON_W / 2 + capW / 2 + 0.002, MON_H / 2 + MON_BZ.t / 2, 0.0006); cap.renderOrder = 992; monMesh.add(cap);
+}
+
+/** モニターの親/位置をHUDに合わせる (placeHud の末尾から呼ぶ)。HUDが非表示でも同じ場所。 */
+function placeMonitor() {
+  monMesh.removeFromParent();
+  monMesh.scale.setScalar(1); monMesh.rotation.set(0, 0, 0);
+  if (!renderer.xr.isPresenting) {                           // デスクトップ: HUD(左下)の真上に左端を揃えて積む
+    camera.add(monMesh);
+    const sc = hudMesh.scale.x;
+    monMesh.scale.setScalar(sc);
+    monMesh.position.set(hudMesh.position.x - 0.12 * sc + (MON_BZ.l + C.MON_W / 2) * sc,
+      hudMesh.position.y + 0.06 * sc + (MON_GAP + MON_BZ.b + MON_H / 2) * sc, hudMesh.position.z);
+  } else if (hud.leftGrip) {                                 // 左グリップ: HUDと同じ平面で、その「上辺側」(手の前方) に並べる
+    hud.leftGrip.add(monMesh);
+    monMesh.rotation.x = HUD_GRIP_RX;
+    monMesh.position.set(0, 0.06 + MON_GAP + MON_BZ.b + MON_H / 2, 0).applyEuler(monMesh.rotation);
+    monMesh.position.y += HUD_GRIP_Y;
+  } else scene.add(monMesh);                                 // 浮遊HUDの隣 (位置は updateHudFloat が毎フレーム更新)
+}
+
+// --- 部屋モデル (layer 3) ---
+const ROOM_STYLE = {                                         // fill=面 / line=外形線 (グリッドはその50%)
+  floor:   { fill: new THREE.Color(0x16212d), line: new THREE.Color(0x5b7c9c) },   // 冷たいグレーブルー
+  wall:    { fill: new THREE.Color(0x2a3d54), line: new THREE.Color(0x7da0c4) },   // 床より少し明るい
+  ceiling: { fill: new THREE.Color(0x1f2c3b), line: new THREE.Color(0x6a87a6) },
+  table:   { fill: new THREE.Color(0x123a2d), line: new THREE.Color(0x2fb88c) },   // アクセント緑 #38d39f を低輝度で
+};
+const roomModel = new THREE.Group(); roomModel.name = 'roomModel'; monScene.add(roomModel);
+const roomFill = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
+  vertexColors: true, side: THREE.DoubleSide, toneMapped: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));   // 線が面に埋もれないよう面を奥へ
+const roomLines = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ vertexColors: true, toneMapped: false }));
+roomFill.frustumCulled = roomLines.frustumCulled = false; roomFill.visible = roomLines.visible = false;
+roomModel.add(roomFill, roomLines);
+setLayer(roomModel, MON_LAYER);
+
+const _fp = [], _fc = [], _lp = [], _lc = [];                // 再構築時のみ使う作業配列
+function pushCol(arr, c, k) { arr.push(c.r * k, c.g * k, c.b * k); }
+function pushSeg(ax, ay, az, bx, by, bz, c, k) { _lp.push(ax, ay, az, bx, by, bz); pushCol(_lc, c, k); pushCol(_lc, c, k); }
+
+/** 平面1枚分 (局所XZ多角形 poly=[x,z,...], 姿勢 m, 局所の外接矩形) を 面+グリッド+外形 として積む */
+function addPoly(poly, m, x0, x1, z0, z1, kind) {
+  let n = poly.length >> 1;
+  if (n > 1 && poly[0] === poly[(n - 1) * 2] && poly[1] === poly[(n - 1) * 2 + 1]) n--;   // 閉じた終点は除く
+  if (n < 3) return;
+  const st = ROOM_STYLE[kind], w = new Float32Array(n * 3), contour = [];
+  for (let i = 0; i < n; i++) {
+    tmpV.set(poly[i * 2], 0, poly[i * 2 + 1]).applyMatrix4(m);
+    w[i * 3] = tmpV.x; w[i * 3 + 1] = tmpV.y; w[i * 3 + 2] = tmpV.z;
+    contour.push(new THREE.Vector2(poly[i * 2], poly[i * 2 + 1]));
+  }
+  let tris = THREE.ShapeUtils.triangulateShape(contour, []);   // 凸なら三角形ファンと同じ。凹多角形でも崩れない
+  if (!tris.length) { tris = []; for (let i = 1; i < n - 1; i++) tris.push([0, i, i + 1]); }
+  for (let t = 0; t < tris.length; t++) for (let k = 0; k < 3; k++) {
+    const i = tris[t][k]; _fp.push(w[i * 3], w[i * 3 + 1], w[i * 3 + 2]); pushCol(_fc, st.fill, 1);
+  }
+  for (let i = 0; i < n; i++) { const j = (i + 1) % n; pushSeg(w[i * 3], w[i * 3 + 1], w[i * 3 + 2], w[j * 3], w[j * 3 + 1], w[j * 3 + 2], st.line, 1); }
+  let g = C.MON_GRID;
+  while ((x1 - x0) / g > 60 || (z1 - z0) / g > 60) g *= 2;     // 巨大平面で線が増えすぎないように
+  for (let x = Math.ceil(x0 / g) * g; x <= x1 + 1e-6; x += g) {
+    tmpV.set(x, 0, z0).applyMatrix4(m); tmpV2.set(x, 0, z1).applyMatrix4(m);
+    pushSeg(tmpV.x, tmpV.y, tmpV.z, tmpV2.x, tmpV2.y, tmpV2.z, st.line, 0.5);
+  }
+  for (let z = Math.ceil(z0 / g) * g; z <= z1 + 1e-6; z += g) {
+    tmpV.set(x0, 0, z).applyMatrix4(m); tmpV2.set(x1, 0, z).applyMatrix4(m);
+    pushSeg(tmpV.x, tmpV.y, tmpV.z, tmpV2.x, tmpV2.y, tmpV2.z, st.line, 0.5);
+  }
+}
+
+function planeKind(pl) {
+  const lb = pl.label;
+  if (lb === 'floor' || lb === 'ceiling' || lb === 'wall') return lb;   // Quest のセマンティックラベルがあれば優先
+  if (!pl.horiz) return 'wall';
+  if (pl.y < room.floorY + 0.25) return 'floor';
+  if (pl.y > room.floorY + 1.8) return 'ceiling';
+  return 'table';
+}
+
+const _bX = new THREE.Vector3(), _bY = new THREE.Vector3(), _bZ = new THREE.Vector3(), _bM = new THREE.Matrix4();
+/** フォールバック箱の1面。局所XZ = 面内の (u,v) 軸。 */
+function addBoxFace(cx, cy, cz, ux, uy, uz, vx, vy, vz, hu, hv, kind) {
+  _bX.set(ux, uy, uz); _bZ.set(vx, vy, vz); _bY.crossVectors(_bZ, _bX);
+  _bM.makeBasis(_bX, _bY, _bZ).setPosition(cx, cy, cz);
+  addPoly([-hu, -hv, hu, -hv, hu, hv, -hu, hv], _bM, -hu, hu, -hv, hv, kind);
+}
+
+function setModelGeo(mesh, pos, col) {
+  const old = mesh.geometry, g = new THREE.BufferGeometry();
+  if (pos.length) {
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(col), 3));
+  }
+  mesh.geometry = g; old.dispose();                          // 古いジオメトリは必ず解放
+  mesh.visible = pos.length > 0;
+}
+
+function rebuildRoomModel() {
+  _fp.length = _fc.length = _lp.length = _lc.length = 0;
+  for (let i = 0; i < planes.length; i++) {
+    const pl = planes[i];
+    if (!pl.valid || !pl.poly) continue;
+    addPoly(pl.poly, pl.m, pl.minX, pl.maxX, pl.minZ, pl.maxZ, planeKind(pl));
+    pl.bm.set(pl.m.elements);
+  }
+  if (!room.fromPlanes) {                                    // 衝突に使っている部屋が箱の場合は、その6面を描く
+    const cx = (room.min.x + room.max.x) / 2, cy = (room.min.y + room.max.y) / 2, cz = (room.min.z + room.max.z) / 2;
+    const hx = (room.max.x - room.min.x) / 2, hy = (room.max.y - room.min.y) / 2, hz = (room.max.z - room.min.z) / 2;
+    addBoxFace(cx, room.min.y, cz, 1, 0, 0, 0, 0, 1, hx, hz, 'floor');
+    addBoxFace(cx, room.max.y, cz, 1, 0, 0, 0, 0, 1, hx, hz, 'ceiling');
+    addBoxFace(cx, cy, room.min.z, 1, 0, 0, 0, 1, 0, hx, hy, 'wall');
+    addBoxFace(cx, cy, room.max.z, 1, 0, 0, 0, 1, 0, hx, hy, 'wall');
+    addBoxFace(room.min.x, cy, cz, 0, 0, 1, 0, 1, 0, hz, hy, 'wall');
+    addBoxFace(room.max.x, cy, cz, 0, 0, 1, 0, 1, 0, hz, hy, 'wall');
+  }
+  setModelGeo(roomFill, _fp, _fc); setModelGeo(roomLines, _lp, _lc);
+  _fp.length = _fc.length = _lp.length = _lc.length = 0;
+  mon.built = true; mon.rev = planesRev; mon.fromPlanes = room.fromPlanes; mon.floorY = room.floorY;
+  mon.box[0] = room.min.x; mon.box[1] = room.min.y; mon.box[2] = room.min.z; mon.box[3] = room.max.x; mon.box[4] = room.max.y; mon.box[5] = room.max.z;
+}
+
+const ROOM_POS_TOL = 0.03, ROOM_ROT_TOL = 0.02, ROOM_REBUILD_MIN = 0.5;   // [m] / 回転行列要素 (≒1.1°) / 再構築の最短間隔 [s]
+/** 部屋モデルが古いか。「最後に作った時の値」との差で判定する (ヒステリシス): Quest の平面姿勢が毎フレーム数mm揺れても
+ *  許容差を超えるまでは作り直さない。量子化(丸め)と違い、境界値付近の揺れで毎回変化扱いになることがない。確保なし。 */
+function roomModelStale() {
+  if (!mon.built || mon.rev !== planesRev || mon.fromPlanes !== room.fromPlanes || Math.abs(mon.floorY - room.floorY) > ROOM_POS_TOL) return true;
+  if (!room.fromPlanes) {
+    const b = mon.box;
+    if (Math.abs(b[0] - room.min.x) > ROOM_POS_TOL || Math.abs(b[1] - room.min.y) > ROOM_POS_TOL || Math.abs(b[2] - room.min.z) > ROOM_POS_TOL
+      || Math.abs(b[3] - room.max.x) > ROOM_POS_TOL || Math.abs(b[4] - room.max.y) > ROOM_POS_TOL || Math.abs(b[5] - room.max.z) > ROOM_POS_TOL) return true;
+  }
+  for (let i = 0; i < planes.length; i++) {
+    const pl = planes[i];
+    if (!pl.valid || !pl.poly) continue;
+    const e = pl.m.elements, b = pl.bm;
+    for (let k = 0; k < 11; k++) if (Math.abs(e[k] - b[k]) > ROOM_ROT_TOL) return true;
+    if (Math.abs(e[12] - b[12]) > ROOM_POS_TOL || Math.abs(e[13] - b[13]) > ROOM_POS_TOL || Math.abs(e[14] - b[14]) > ROOM_POS_TOL) return true;
+  }
+  return false;
+}
+/** 部屋データが変わっていれば作り直す。作り直したら true。 */
+function syncRoomModel() {
+  if (!roomModelStale()) return false;
+  rebuildRoomModel(); mon.cool = ROOM_REBUILD_MIN;
+  return true;
+}
+
+// --- ユーザーマーカー (頭=球+前方バイザー、胴=先細りの円柱で床まで) ---
+const userMark = new THREE.Group(); userMark.name = 'userMarker'; userMark.visible = false;
+const userHead = new THREE.Group(), userBody = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.07, 1, 14, 1).translate(0, 0.5, 0), new THREE.MeshBasicMaterial({ color: 0x38d39f, toneMapped: false }));
+userHead.add(new THREE.Mesh(new THREE.SphereGeometry(0.11, 18, 12), new THREE.MeshBasicMaterial({ color: 0x8dffd8, toneMapped: false })));
+{ const visor = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.05, 0.08), new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false })); visor.position.set(0, 0.01, -0.12); userHead.add(visor); }
+userMark.add(userHead, userBody); monScene.add(userMark); setLayer(userMark, MON_LAYER);
+
+/** FPVカメラ: 位置=ドローンのジンバル、向き=ヨーのみ + 固定の下向き + 機体ピッチ/ロールの一部 */
+function updateFpvCamera() {
+  fpvCam.position.copy(dUD.gimbal.position).applyQuaternion(drone.quaternion).add(drone.position);
+  buildQuat(fpvCam.quaternion, sim.yaw, C.FPV_DOWN_DEG * Math.PI / 180 + C.FPV_TILT_FOLLOW * sim.pitch, C.FPV_TILT_FOLLOW * sim.roll);
+}
+
+const _clr = new THREE.Color();
+/** モニター用RTへ1回描く。XRセッション中でも安全なように xr.enabled / RT / クリア色を退避して必ず元に戻す。 */
+function renderMonitor() {
+  updateFpvCamera();
+  userMark.visible = head.valid;
+  if (head.valid) {
+    userHead.position.copy(head.pos);
+    userHead.rotation.y = Math.atan2(-head.fwdH.x, -head.fwdH.z);
+    const bodyH = Math.max(0.1, head.pos.y - 0.12 - room.floorY);
+    userBody.position.set(head.pos.x, room.floorY, head.pos.z); userBody.scale.y = bodyH;
+  }
+  const xrWas = renderer.xr.enabled, rtWas = renderer.getRenderTarget(), aWas = renderer.getClearAlpha();
+  renderer.getClearColor(_clr);
+  renderer.xr.enabled = false;                               // XRカメラ差し替えと深度センシングメッシュ(getDepthSensingMesh)を無効化
+  try {
+    renderer.setRenderTarget(monRT);
+    renderer.setClearColor(MON_BG, 1);                       // メインはアルファ0(パススルー)。モニターは不透明
+    renderer.clear();
+    renderer.render(monScene, fpvCam);
+  } finally {                                                // 例外時も必ず戻す (xr.enabled=false のままだとXR描画が壊れる)
+    renderer.setRenderTarget(rtWas);                         // XR中は three が設定したXR用RT (フレームバッファ/ビューポート/シザーも再設定される)
+    renderer.setClearColor(_clr, aWas);
+    renderer.xr.enabled = xrWas;
+  }
+}
+
+function updateMonitor(dt) {
+  if (mon.cool > 0) mon.cool -= dt;
+  if (!mon.on) return;
+  if (mon.check && mon.cool <= 0) { mon.check = false; syncRoomModel(); }   // 部屋の定期更新(≤1Hz)の後だけ判定。再構築は最短 ROOM_REBUILD_MIN 間隔
+  mon.acc += dt;
+  const period = 1 / C.FPV_HZ;
+  if (mon.acc < period) return;
+  mon.acc = Math.min(mon.acc - period, period);
+  renderMonitor();
+}
+function setMonitor(on) {
+  if (on === mon.on) return;
+  mon.on = on; monMesh.visible = on; mon.acc = 1;            // ON直後は次フレームですぐ描く
+  if (on) { mon.check = false; syncRoomModel(); }
+}
+function toggleMonitor() { setMonitor(!mon.on); }
+function resetMonitor() {                                    // セッション終了/開始時: OFF + 部屋モデルを破棄
+  mon.on = false; mon.acc = 0; mon.built = false; mon.check = false; mon.cool = 0; monMesh.visible = false; userMark.visible = false;
+  setModelGeo(roomFill, [], []); setModelGeo(roomLines, [], []);
+}
+
+/* =====================================================================
+ * 13. サウンド (Web Audio, 手続き生成)
  * ===================================================================== */
 const audio = { ctx: null, oscs: [], mults: [1, 1.012, 2.003], master: null, bp: null, noiseGain: null, panner: null, t: 0 };
 
@@ -788,7 +1066,7 @@ function updateAudio(avgRpm, now, lpos, lquat) {
 }
 
 /* =====================================================================
- * 13. 入力 (XRコントローラー / キーボード)
+ * 14. 入力 (XRコントローラー / キーボード)
  * ===================================================================== */
 function shape(v) {
   const a = Math.abs(v);
@@ -811,6 +1089,7 @@ function readXRInputs(session) {
     if (s.handedness === 'left') {
       gotL = true; input.lx = shape(sx); input.ly = shape(-sy);   // 上=上昇, 右=右旋回
       if (edge('X', !!(b[4] && b[4].pressed))) toggleHud();
+      if (edge('L', !!(b[0] && b[0].pressed))) toggleMonitor();   // 左トリガー = ドローン視点モニター
     } else if (s.handedness === 'right') {
       gotR = true; input.rx = shape(sx); input.ry = shape(-sy);   // 前=前進, 右=右移動
       if (edge('A', !!(b[4] && b[4].pressed))) toggleMode();
@@ -818,7 +1097,7 @@ function readXRInputs(session) {
       input.recall = !!(b[0] && b[0].pressed);
     }
   }
-  if (!gotL) prevBtn.X = false;
+  if (!gotL) { prevBtn.X = false; prevBtn.L = false; }
   if (!gotR) { prevBtn.A = false; prevBtn.B = false; }
   input.hasController = gotL || gotR;
 }
@@ -832,6 +1111,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM') toggleMode();
   else if (e.code === 'KeyT') toggleFlight();
   else if (e.code === 'KeyH') toggleHud();
+  else if (e.code === 'KeyV') toggleMonitor();
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 function readKeyboard() {
@@ -858,7 +1138,7 @@ function updateOrbit() {
 }
 
 /* =====================================================================
- * 14. メインループ
+ * 15. メインループ
  * ===================================================================== */
 let xrSession = null, placed = false, lastT = 0, noCtrlT = 0, autoTakeoffDone = false;
 
@@ -908,7 +1188,7 @@ function frame(time, xrFrame) {
     if (noCtrlT > C.AUTO_TAKEOFF_DELAY) { noCtrlT = 0; toggleFlight(); }
   } else noCtrlT = 0;
   roomTimer -= dt;
-  if (roomTimer <= 0) { roomTimer = C.ROOM_REFRESH; if (xr && planeFeature) recomputeRoom(); else if (!xr || !planeFeature) setFallbackRoom(); }
+  if (roomTimer <= 0) { roomTimer = C.ROOM_REFRESH; if (xr && planeFeature) recomputeRoom(); else if (!xr || !planeFeature) setFallbackRoom(); mon.check = true; }
 
   // --- 固定タイムステップ ---
   if (placed) {
@@ -952,20 +1232,23 @@ function frame(time, xrFrame) {
   desk.visible = !xr;
   hudMesh.visible = sim.hudOn;
   updateHud(dt); updateHudFloat();
+  updateMonitor(dt);                                         // ドローン視点を (30Hz上限で) RTへ描く: メイン描画の前
   if (xr) updateAudio(avg, now, head.pos, head.quat); else updateAudio(avg, now, camera.position, camera.quaternion);
   renderer.render(scene, camera);
 }
 let acc = 0;
 
 /* =====================================================================
- * 15. セッション管理
+ * 16. セッション管理
  * ===================================================================== */
 function resetWorld() {
   placed = false; acc = 0; sim.state = ST_LANDED; sim.mode = MODE_AUTO; sim.spool = 0; sim.rpm.fill(0);
   sim.pitch = sim.roll = sim.yawRate = 0; sim.holdXZ = sim.holdY = false;
   planes.length = 0; planeMap.clear(); planeFeature = false; roomTimer = 0; head.valid = false; hud.hudInit = false;
   auto.phase = 1; auto.until = 0; auto.speed = 0;
-  prevBtn.A = prevBtn.B = prevBtn.X = false;
+  prevBtn.A = prevBtn.B = prevBtn.X = prevBtn.L = false;
+  planesRev++;
+  resetMonitor();
   autoTakeoffDone = false; noCtrlT = 0;
 }
 
@@ -1020,9 +1303,9 @@ window.addEventListener('resize', () => {
 // デバッグ用ハンドル (?debug 付きURLのみ)。テストから内部状態と XR 向け関数を直接叩く。
 if (new URLSearchParams(location.search).has('debug')) {
   window.__drone = {
-    THREE, C, pos, vel, quat, sim, shadowBias, shadowMat, input, head, room, planes, auto, hud, hudMesh, audio, drone, shadow, camera, renderer, scene, orbit, tgt, vCmd, startCenter,
+    THREE, C, pos, vel, quat, sim, shadowBias, shadowMat, input, head, room, planes, auto, hud, hudMesh, audio, drone, mon, monMesh, monRT, monScene, fpvCam, roomModel, roomFill, roomLines, userMark, MON_LAYER, planeKind, shadow, camera, renderer, scene, orbit, tgt, vCmd, startCenter,
     stepSim, collide, updatePlanes, recomputeRoom, readXRInputs, placeHud, updateHeadXR, pickWaypoint, behindWall, surfaceHeightAt, surfaceClearance,
-    toggleFlight, toggleMode, toggleHud, resetWorld, placeDroneInitial, initAudio, stopAudio, frame,
+    toggleFlight, toggleMode, toggleHud, toggleMonitor, setMonitor, renderMonitor, updateFpvCamera, syncRoomModel, rebuildRoomModel, roomModelStale, resetWorld, placeDroneInitial, initAudio, stopAudio, frame,
     get yawCmd() { return yawCmd; }, get xrSession() { return xrSession; }, get placed() { return placed; },
     setLeftGrip(g) { hud.leftGrip = g; },
   };
@@ -1047,7 +1330,7 @@ if (new URLSearchParams(location.search).has('debug')) {
     go(true);
   } else {
     // デスクトッププレビュー
-    msgEl.textContent = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / ドラッグ=視点';
+    msgEl.textContent = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / V=ドローン視点 / ドラッグ=視点';
     btn.textContent = 'PCプレビューを開始';
     renderer.domElement.style.display = 'block';
     resetWorld(); placeHud();
