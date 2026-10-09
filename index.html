@@ -12,9 +12,9 @@
   :root { --bg:#0b0f14; --fg:#e8eef5; --muted:#9fb0c3; --accent:#38d39f; --card:#141b24cc; }
   html,body { margin:0; height:100%; overflow:hidden; background:radial-gradient(ellipse at 50% 30%, #1d2a38, #0b0f14 70%); color:var(--fg); font-family:system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif; }
   canvas { display:block; position:fixed; inset:0; }
-  #start { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:10; padding:16px; box-sizing:border-box; }
+  #start { position:fixed; inset:0; display:flex; z-index:10; padding:16px; box-sizing:border-box; overflow:auto; }   /* 中央寄せは .card の margin:auto (画面が低くてはみ出す時に上端が切れず、スクロールできる) */
   #start.hidden { display:none; }
-  .card { max-width:560px; width:100%; background:var(--card); backdrop-filter:blur(10px); border:1px solid #ffffff22; border-radius:20px; padding:28px 28px 24px; box-shadow:0 20px 60px #0008; }
+  .card { margin:auto; max-width:560px; width:100%; background:var(--card); backdrop-filter:blur(10px); border:1px solid #ffffff22; border-radius:20px; padding:28px 28px 24px; box-shadow:0 20px 60px #0008; }
   h1 { margin:0 0 6px; font-size:28px; letter-spacing:.02em; }
   .sub { color:var(--muted); margin:0 0 16px; font-size:14px; }
   ul { margin:0 0 18px; padding-left:20px; line-height:1.7; font-size:14px; }
@@ -22,6 +22,36 @@
   button { appearance:none; border:0; cursor:pointer; width:100%; padding:16px; border-radius:14px; font-size:20px; font-weight:700; color:#06231a; background:var(--accent); }
   button:disabled { opacity:.5; cursor:default; }
   #msg { margin:14px 0 0; font-size:14px; line-height:1.6; color:#ffd479; min-height:1em; }
+  #roomWrap { margin:0 0 14px; }
+  #roomWrap label { display:block; font-size:13px; color:var(--muted); margin:0 0 6px; }
+  #room { width:100%; box-sizing:border-box; padding:12px 14px; border-radius:12px; border:1px solid #ffffff33; background:#0b0f14aa; color:var(--fg); font-size:16px; font-family:inherit; }
+  #room:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  #ver { margin:10px 0 0; font-size:11px; color:var(--muted); text-align:right; }
+  /* PC観戦モードの名簿 (DOM。リモート由来の値は textContent でのみ挿入する)。
+     広い画面: 左の縦帯 (3Dビューはその右側だけに描くので名簿が部屋を隠さない) / 狭い画面 (.top): 上の横帯。プロジェクター向けに黒地・白文字の高コントラスト。 */
+  #roster { position:fixed; top:0; left:0; bottom:0; z-index:5; box-sizing:border-box; width:clamp(300px, 34vw, 580px); overflow:auto; padding:16px 16px 12px;
+    background:#0b0f14; border-right:1px solid #ffffff38; color:#fff; font-size:clamp(13px, 1.32vw, 23px); line-height:1.45; font-variant-numeric:tabular-nums; }
+  #roster.top { bottom:auto; right:0; width:auto; max-height:44vh; border-right:0; border-bottom:1px solid #ffffff38; padding:10px 12px 8px; font-size:13px; }
+  #roster[hidden] { display:none; }
+  #roster .hd { font-weight:700; font-size:1.25em; overflow-wrap:anywhere; }
+  #roster .st { color:#c5d2e0; margin:2px 0 10px; }
+  #roster .empty { color:#ffd479; padding:8px 0; }
+  #roster .hrow, #roster .row { display:grid; grid-template-columns:1.15em 1.5em minmax(5.6em,1fr) 3.6em 4.1em 3.4em; gap:0 .55em; align-items:center; white-space:nowrap; }
+  #roster .hrow { color:#9fb0c3; font-size:.78em; padding:0 4px 3px; }
+  #roster .row { padding:5px 4px; border-top:1px solid #ffffff24; cursor:pointer; }
+  #roster .row:hover { background:#ffffff12; }
+  #roster .row.dim > span { opacity:.6; }
+  #roster .row.dim > .al { opacity:1; }
+  #roster .row.fol { background:#ffffff26; border-radius:6px; outline:2px solid #ffffff66; outline-offset:-2px; }
+  #roster .sw { width:1.1em; height:1.1em; border-radius:50%; border:2px solid #ffffffcc; box-sizing:border-box; }
+  #roster .no { font-weight:800; text-align:right; font-size:1.1em; }
+  #roster .c3 { overflow:hidden; text-overflow:ellipsis; }
+  #roster .c4, #roster .c5, #roster .al { text-align:right; }
+  #roster .al { font-weight:700; color:#8dffd8; }
+  #roster .al.bad { color:#ffd479; }
+  #roster .keys { margin-top:12px; color:#9fb0c3; font-size:.74em; line-height:1.55; white-space:normal; }
+  #roster.top .keys { display:none; }
+  #roomHint { margin:6px 0 0; font-size:11.5px; line-height:1.5; color:var(--muted); }
 </style>
 <script type="importmap">
 { "imports": {
@@ -39,15 +69,22 @@
       <li>広めの場所で、周囲の安全を確認してから開始してください。</li>
       <li><b>自動モード</b>：ドローンが部屋の中を自由に飛び回ります。</li>
       <li><b>手動モード</b>：左スティック＝上下・旋回、右スティック＝前後・左右。</li>
-      <li><b>A</b>＝自動/手動切替　<b>B</b>＝離陸/着陸　<b>右トリガー長押し</b>＝手元へ呼び戻し　<b>X</b>＝HUD表示切替　<b>左トリガー</b>＝ドローン視点</li>
+      <li><b>A</b>＝自動/手動切替　<b>B</b>＝離陸/着陸　<b>右トリガー長押し</b>＝手元へ呼び戻し　<b>X</b>＝HUD表示切替　<b>左トリガー</b>＝ドローン視点　<b>Y</b>＝位置合わせ（ルーム参加時）</li>
       <li>コントローラーなし（ハンドトラッキング）の場合は自動モードで飛行します。ピンチで離着陸。</li>
     </ul>
+    <div id="roomWrap"><label for="room">ルーム名（空欄なら1人で飛行）</label><input id="room" type="text" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ルーム名（空欄なら1人で飛行）">
+      <p id="roomHint">同じルーム名の人と一緒に飛ばせます（PCは観戦）。位置合わせは Y ボタン（全員が同じ2点を同じ順に）。chrome://flags の「WebXR experiments」が有効なら自動。</p></div>
     <button id="btn" type="button">MRを開始</button>
     <p id="msg"></p>
+    <p id="ver"></p>
   </div>
 </div>
+<div id="roster" hidden></div>
 <script type="module">
 import * as THREE from 'three';
+
+const APP_VERSION = 'v0.4';                                    // 開始画面に表示するビルド識別子
+const DEBUG = new URLSearchParams(location.search).has('debug');
 
 /* =====================================================================
  * 1. 定数 (チューニングパラメータ)
@@ -76,6 +113,20 @@ const C = Object.freeze({
   FPV_RT_W: 512, FPV_RT_H: 288,            // モニター用レンダーターゲット解像度
   MON_W: 0.18,                             // モニター画面の幅 [m] (高さは16:9)
   MON_GRID: 0.5,                           // 部屋モデルのグリッド間隔 [m]
+  // --- マルチプレイ (ルーム参加時のみ使用) ---
+  NET_HZ: 20,                              // 自機の状態送信頻度 [Hz]
+  NET_INTERP_MS: 100, NET_EXTRAP_MS: 250,  // 他機を表示する過去への遅れ [ms] / 外挿の上限 [ms]
+  NET_LOST_MS: 3000, NET_FADE_S: 0.5,      // 無通信でフェードアウトを始める時間 [ms] / フェード時間 [s]
+  NET_DROP_MS: 15000, NET_STALL_MS: 2500,  // 無通信の相手を切り離す時間 [ms] / 自分のタイマーがこれ以上止まっていたら「自分が停止していた」とみなす [ms]
+  NET_TX_BACKLOG: 2048, NET_META_BACKLOG: 262144,   // 送信バッファがこれより溜まっている相手へは 状態 / その他 を送らない [byte]
+  NET_PENDING_MAX: 6, NET_LOST_RETRY_MS: 300000,    // 同時に試す接続数の上限 / 切れた相手へ再接続を試み続ける時間 [ms]
+  NET_RX_MAX_PER_S: 400,                   // 1相手あたりの受信メッセージ数の上限 [1/s] (超過分は捨てる)
+  NET_RETRY_MS: 20000, NET_RETRY_MAX: 3,   // ルームサーバーに繋がらなかった時の自動再参加の間隔 [ms] / 回数
+  NET_SLOTS: 24, NET_MAX_POS: 50,          // スロット数 / 受信座標の上限 [m]
+  NET_MAX_PLANES: 64, NET_MAX_POLY: 64, NET_MAX_MSG: 32768,   // 受信する平面数 / 1平面の頂点数 / 1メッセージの最大文字数
+  NET_LOAD_MS: 8000, NET_OPEN_MS: 10000,   // PeerJS読み込みの待ち時間 / シグナリング接続・データ接続の待ち時間 [ms]
+  NET_PLANES_MIN_MS: 2000,                 // 平面の再送の最短間隔 [ms]
+  CAL_MIN_DIST: 0.3,                       // 手動位置合わせの2点間の最小水平距離 [m]
 });
 
 /* =====================================================================
@@ -99,12 +150,14 @@ class PID {
 /* =====================================================================
  * 3. ドローンモデル (全て手続き生成)  原点=スキッド底面、機首=-Z
  * ===================================================================== */
-function createDrone() {
+function createDrone(opts) {
+  if (opts && opts.lite) return createLiteDrone(opts);       // 他機用の軽量モデル (下の createLiteDrone)
   const g = new THREE.Group();
   g.name = 'drone';
   const std = (color, metalness, roughness, extra) => new THREE.MeshStandardMaterial(Object.assign({ color, metalness, roughness }, extra));
   const mShell = std(0xe4e7ec, 0.35, 0.38);
   const mDark = std(0x1d2025, 0.5, 0.5);
+  const mCanopy = std(0x1d2025, 0.5, 0.5);                   // スロット色を載せるキャノピー (初期は mDark と同じ見た目)
   const mArm = std(0x2b2f36, 0.6, 0.45);
   const mMotor = std(0x9aa2ad, 0.55, 0.35);   // 環境マップ無しでも黒潰れしない程度の金属感
   const mSkid = std(0x15171b, 0.3, 0.6);
@@ -117,7 +170,7 @@ function createDrone() {
   // --- 本体 (丸みのある外観: 潰した球 + ボックス) ---
   const hull = new THREE.Mesh(new THREE.SphereGeometry(0.5, 24, 16), mShell);
   hull.scale.set(0.105, 0.045, 0.15); hull.position.y = BY; g.add(hull);
-  const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.5, 20, 12), mDark);
+  const canopy = new THREE.Mesh(new THREE.SphereGeometry(0.5, 20, 12), mCanopy);
   canopy.scale.set(0.06, 0.03, 0.08); canopy.position.set(0, BY + 0.025, 0.01); g.add(canopy);
   const batt = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.022, 0.095), mDark);
   batt.position.y = BY - 0.03; g.add(batt);
@@ -174,8 +227,140 @@ function createDrone() {
   lens.rotation.x = Math.PI / 2; lens.position.z = -0.02; gimbal.add(lens);
   const yoke = new THREE.Mesh(new THREE.BoxGeometry(0.044, 0.006, 0.012), mMotor); yoke.position.set(0, 0.018, 0.004); gimbal.add(yoke);
 
-  g.userData = { props, bladeMat, discMat, gimbal, ledRear: mLedR, ledFront: mLedF };
+  // スロット色のLEDリング (ルーム参加時のみ表示。ソロでは visible=false で描画されない)
+  const mRing = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.062, 0.006, 8, 28).rotateX(Math.PI / 2), mRing);
+  ring.position.y = BY - 0.034; ring.visible = false; g.add(ring);
+
+  g.userData = { props, bladeMat, discMat, gimbal, ledRear: mLedR, ledFront: mLedF, accentMat: mCanopy, ring };
+  if (opts && opts.color != null) setDroneColor(g, opts.color);
   return g;
+}
+
+/** 自機にスロット色を付ける (color=null で元の見た目に戻す)。キャノピー(色+弱い自己発光) + 下面のLEDリング。 */
+function setDroneColor(g, color) {
+  const u = g.userData;
+  if (color == null) { u.accentMat.color.setHex(0x1d2025); u.accentMat.emissive.setHex(0x000000); u.ring.visible = false; return; }
+  u.accentMat.color.set(color); u.accentMat.emissive.set(color); u.accentMat.emissiveIntensity = 0.45;
+  u.ring.material.color.set(color); u.ring.visible = true;
+}
+
+/** スロット色 (12色)。オカベ・イトウ配色を出発点に、色覚シミュレーション (Machado 2009: 1型/2型/3型, 強度1.0) の下でも全ペアの
+ *  OKLab色差の最小値が大きくなるよう各色を元の色相の近くで調整したもの (最小色差: 調整前 0.004 [青と紫が1型で同色] → 調整後 0.10)。
+ *  明度も 0.5〜0.97 に散らしてある。色だけに頼らず番号タグも必ず付ける。 */
+const PALETTE = [0xee9709, 0x5eb2ec, 0x3f9869, 0xfbf711, 0x5c41e8, 0xef4a19, 0xc94eb4, 0xc6ffff, 0x9977ff, 0x96484d, 0x00e4da, 0xc4d284];
+const hex6 = (c) => '#' + c.toString(16).padStart(6, '0');
+
+/* --- 他機用の軽量ドローン ---------------------------------------------------------------
+ * 静的パーツは頂点カラー付きで1メッシュに結合 (ジオメトリは全機で共有)。描画は 本体/アクセント/LEDリング/ローターディスク/番号タグ/影 の6コール。
+ * フェードアウト・減光を機ごとに行えるよう、マテリアルは機ごとに複製 (シェーダープログラムは three が共有する)。 */
+const LITE = { ready: false, bodyGeo: null, accentGeo: null, ringGeo: null, discGeo: null, tagTex: new Map() };
+
+/** 複数ジオメトリ (position/normal と任意の color、インデックス有無は混在可) を1つに結合する。
+ *  three の addons (BufferGeometryUtils) を別途ネットワークから読むと失敗点が増えるので、必要な分だけ自前で持つ。 */
+function mergeGeos(list) {
+  let nv = 0, ni = 0;
+  for (const g of list) { const n = g.attributes.position.count; nv += n; ni += g.index ? g.index.count : n; }
+  const hasCol = !!list[0].attributes.color;
+  const P = new Float32Array(nv * 3), N = new Float32Array(nv * 3), K = hasCol ? new Float32Array(nv * 3) : null, I = nv > 65535 ? new Uint32Array(ni) : new Uint16Array(ni);
+  let vo = 0, io = 0;
+  for (const g of list) {
+    const n = g.attributes.position.count;
+    P.set(g.attributes.position.array, vo * 3); N.set(g.attributes.normal.array, vo * 3); if (K) K.set(g.attributes.color.array, vo * 3);
+    if (g.index) { const a = g.index.array; for (let k = 0; k < a.length; k++) I[io++] = a[k] + vo; } else for (let k = 0; k < n; k++) I[io++] = vo + k;
+    vo += n;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(P, 3)); out.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+  if (K) out.setAttribute('color', new THREE.BufferAttribute(K, 3));
+  out.setIndex(new THREE.BufferAttribute(I, 1));
+  return out;
+}
+
+function buildLiteResources() {
+  if (LITE.ready) return;
+  const BY = 0.075, MD = 0.106, armLen = Math.hypot(MD, MD);
+  const col = new THREE.Color(), eu = new THREE.Euler(), qq = new THREE.Quaternion(), vp = new THREE.Vector3(), vs = new THREE.Vector3(), mm = new THREE.Matrix4();
+  const place = (geo, x, y, z, rx, ry, rz, sx, sy, sz) => {
+    mm.compose(vp.set(x, y, z), qq.setFromEuler(eu.set(rx, ry, rz)), vs.set(sx, sy, sz)); geo.applyMatrix4(mm); geo.deleteAttribute('uv'); return geo;
+  };
+  const body = [], accent = [], motors = [[1, -1], [-1, -1], [1, 1], [-1, 1]];
+  const addBody = (geo, hex, x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) => {
+    place(geo, x, y, z, rx, ry, rz, sx, sy, sz);
+    const n = geo.attributes.position.count, c = new Float32Array(n * 3); col.setHex(hex);
+    for (let i = 0; i < n; i++) { c[i * 3] = col.r; c[i * 3 + 1] = col.g; c[i * 3 + 2] = col.b; }
+    geo.setAttribute('color', new THREE.BufferAttribute(c, 3)); body.push(geo);
+  };
+  addBody(new THREE.SphereGeometry(0.5, 14, 10), 0xe4e7ec, 0, BY, 0, 0, 0, 0, 0.105, 0.045, 0.15);
+  addBody(new THREE.BoxGeometry(0.06, 0.022, 0.095), 0x1d2025, 0, BY - 0.03, 0);
+  for (const [sx, sz] of motors) {
+    const mx = sx * MD, mz = sz * MD, ay = Math.atan2(-mz, mx);
+    addBody(new THREE.BoxGeometry(armLen, 0.012, 0.018), 0x2b2f36, mx / 2, BY, mz / 2, 0, ay, 0);
+    addBody(new THREE.CylinderGeometry(0.017, 0.019, 0.024, 10), 0x9aa2ad, mx, BY + 0.012, mz);
+    addBody(new THREE.BoxGeometry(0.15, 0.003, 0.015), 0x2a2d33, mx, BY + 0.03, mz, 0, Math.PI / 4 * sx * sz, 0);   // 静的ブレード
+    addBody(new THREE.SphereGeometry(0.0065, 6, 4), sz < 0 ? 0x22ff55 : 0xff2222, mx * 1.12, BY - 0.004, mz * 1.12);
+    accent.push(place(new THREE.BoxGeometry(armLen * 0.6, 0.004, 0.013), mx / 2, BY + 0.0085, mz / 2, 0, ay, 0, 1, 1, 1));   // アーム上のスロット色ストライプ
+  }
+  accent.push(place(new THREE.SphereGeometry(0.5, 12, 8), 0, BY + 0.025, 0.01, 0, 0, 0, 0.06, 0.03, 0.08));                    // キャノピー
+  for (const sx of [-1, 1]) {
+    addBody(new THREE.CylinderGeometry(0.0045, 0.0045, 0.16, 6).rotateX(Math.PI / 2), 0x15171b, sx * 0.075, 0.0045, 0);
+    for (const sz of [-1, 1]) addBody(new THREE.BoxGeometry(0.006, 0.05, 0.008), 0x15171b, sx * 0.072, 0.03, sz * 0.06, 0, 0, -sx * 0.18);
+  }
+  addBody(new THREE.BoxGeometry(0.034, 0.03, 0.03), 0x1d2025, 0, BY - 0.012, -0.072);
+  addBody(new THREE.CylinderGeometry(0.01, 0.012, 0.014, 10), 0x05070a, 0, BY - 0.012, -0.092, Math.PI / 2, 0, 0);
+  LITE.bodyGeo = mergeGeos(body);
+  LITE.accentGeo = mergeGeos(accent);
+  LITE.ringGeo = place(new THREE.TorusGeometry(0.062, 0.006, 6, 24).rotateX(Math.PI / 2), 0, BY - 0.034, 0, 0, 0, 0, 1, 1, 1);
+  const discs = motors.map(([sx, sz]) => place(new THREE.CircleGeometry(0.076, 18).rotateX(-Math.PI / 2), sx * MD, BY + 0.03, sz * MD, 0, 0, 0, 1, 1, 1));
+  LITE.discGeo = mergeGeos(discs);
+  for (const g of body.concat(accent, discs)) g.dispose();
+  LITE.ready = true;
+}
+
+/** 番号タグ用テクスチャ (スロットごとに1回だけ作る小さなCanvas) */
+function liteTagTexture(slot) {
+  let t = LITE.tagTex.get(slot);
+  if (t) return t;
+  const cv = document.createElement('canvas'); cv.width = cv.height = 64;
+  const x = cv.getContext('2d'), c = PALETTE[slot % PALETTE.length];
+  const lum = (((c >> 16) & 255) * 0.299 + ((c >> 8) & 255) * 0.587 + (c & 255) * 0.114);
+  x.fillStyle = 'rgba(8,12,18,0.85)'; x.beginPath(); if (x.roundRect) x.roundRect(1, 1, 62, 62, 14); else x.rect(1, 1, 62, 62); x.fill();
+  x.fillStyle = hex6(c); x.beginPath(); if (x.roundRect) x.roundRect(5, 5, 54, 54, 11); else x.rect(5, 5, 54, 54); x.fill();
+  x.fillStyle = lum > 140 ? '#10161d' : '#ffffff'; x.font = 'bold ' + (slot + 1 > 9 ? 34 : 44) + 'px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(String(slot + 1), 32, 35);
+  t = new THREE.CanvasTexture(cv); t.colorSpace = THREE.SRGBColorSpace; LITE.tagTex.set(slot, t);
+  return t;
+}
+
+/** 他機用ドローン: createDrone({ lite:true, color, slot })。buildLiteResources() 済みであること。原点=スキッド底面 (本体), 位置のみ root、姿勢は model。 */
+function createLiteDrone(opts) {
+  const color = opts.color != null ? opts.color : PALETTE[0], slot = opts.slot | 0;
+  const root = new THREE.Group(); root.name = 'droneLite';
+  const model = new THREE.Group(); root.add(model);
+  const bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, metalness: 0.4, roughness: 0.45, transparent: true });
+  const accentMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.4, metalness: 0.2, roughness: 0.45, transparent: true });
+  const ringMat = new THREE.MeshBasicMaterial({ color, toneMapped: false, transparent: true });
+  const discMat = new THREE.MeshBasicMaterial({ color: 0xcfd6de, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+  discMat.forceSinglePass = true;                          // 透明+両面は既定で2回描画(裏→表)。薄い円盤なので1回でよい (描画コール節約)
+  const body = new THREE.Mesh(LITE.bodyGeo, bodyMat), accent = new THREE.Mesh(LITE.accentGeo, accentMat);
+  const ring = new THREE.Mesh(LITE.ringGeo, ringMat), disc = new THREE.Mesh(LITE.discGeo, discMat);
+  disc.visible = false; model.add(body, accent, ring, disc);
+  const tagMat = new THREE.SpriteMaterial({ map: liteTagTexture(slot), transparent: true, depthWrite: false });
+  const tag = new THREE.Sprite(tagMat); tag.scale.set(0.18, 0.18, 1); tag.position.y = 0.24; root.add(tag);
+  if (opts.spectator) {                                    // PC観戦 (プロジェクター想定): 機体を1.6倍に誇張し、番号タグは距離によらず一定の画面サイズで壁越しでも常に見せる
+    model.scale.setScalar(1.6);
+    tagMat.sizeAttenuation = false; tagMat.depthTest = false; tag.renderOrder = 20; tag.scale.set(0.05, 0.05, 1); tag.position.y = 0.36;
+  }
+  const shMat = new THREE.MeshBasicMaterial({ map: shadowMat.map, transparent: true, depthWrite: false, opacity: 0.5 });
+  shMat.onBeforeCompile = shadowBeforeCompile;
+  const shadowM = new THREE.Mesh(shadowGeo, shMat); shadowM.renderOrder = 1; root.add(shadowM);
+  root.userData = { lite: true, slot, model, body, accent, ring, disc, tag, shadow: shadowM, bodyMat, accentMat, ringMat, discMat, tagMat, shMat };
+  return root;
+}
+function disposeLiteDrone(d) {
+  const u = d.userData;
+  d.removeFromParent();
+  u.bodyMat.dispose(); u.accentMat.dispose(); u.ringMat.dispose(); u.discMat.dispose(); u.tagMat.dispose(); u.shMat.dispose();   // ジオメトリ/テクスチャは共有なので解放しない
 }
 
 /** 丸いぼかし影テクスチャ */
@@ -222,7 +407,7 @@ const pidVx = new PID(3.5, 1.2, 0, 1.5), pidVz = new PID(3.5, 1.2, 0, 1.5), pidV
 
 // 入力 (スティックは整形済み)
 const input = { lx: 0, ly: 0, rx: 0, ry: 0, recall: false, hasController: false };
-const prevBtn = { A: false, B: false, X: false, L: false };
+const prevBtn = { A: false, B: false, X: false, L: false, Y: false, RT: false };   // Y/RT: ルーム参加時の位置合わせ用
 
 // ユーザーの頭
 const head = { pos: new THREE.Vector3(0, 1.6, 0), fwd: new THREE.Vector3(0, 0, -1), fwdH: new THREE.Vector3(0, 0, -1), quat: new THREE.Quaternion(), valid: false };
@@ -637,11 +822,12 @@ const dUD = drone.userData;
 // ブロブシャドウ
 const shadowMat = new THREE.MeshBasicMaterial({ map: createBlobTexture(), transparent: true, depthWrite: false, opacity: 0.5 });
 const shadowBias = { value: 0 };   // [m] 深度センシング有効時のみ >0 (実床の深度ノイズに影が埋もれないよう深度だけ手前へ)
-shadowMat.onBeforeCompile = (sh) => {
+function shadowBeforeCompile(sh) {                           // 他機の影 (createLiteDrone) も同じ関数を使う → プログラムが共有される
   sh.uniforms.uShadowBias = shadowBias;
   sh.vertexShader = 'uniform float uShadowBias;\n' + sh.vertexShader.replace('#include <project_vertex>',
     '#include <project_vertex>\n  { vec4 pb = projectionMatrix * ( mvPosition + vec4( 0.0, 0.0, uShadowBias, 0.0 ) ); gl_Position.z = pb.z / pb.w * gl_Position.w; }');
-};
+}
+shadowMat.onBeforeCompile = shadowBeforeCompile;
 const shadowGeo = new THREE.PlaneGeometry(1, 1); shadowGeo.rotateX(-Math.PI / 2);
 const shadow = new THREE.Mesh(shadowGeo, shadowMat); shadow.renderOrder = 1; scene.add(shadow);
 
@@ -662,7 +848,76 @@ const hudTex = new THREE.CanvasTexture(hudCv); hudTex.colorSpace = THREE.SRGBCol
 const hudMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.12), new THREE.MeshBasicMaterial({ map: hudTex, transparent: true, depthTest: false }));
 hudMesh.renderOrder = 999;
 const HUD_GRIP_Y = 0.07, HUD_GRIP_RX = -Math.PI / 2 + 0.5;   // 左グリップ上のHUD位置/傾き (モニターも同じ平面を使う)
-const hud = { acc: 0, alt: -1, spd: -1, mode: -1, state: -1, noPlane: null, ctrl: null, on: null, leftGrip: null, hudInit: false };
+const hud = { acc: 0, alt: -1, spd: -1, mode: -1, state: -1, noPlane: null, ctrl: null, on: null, leftGrip: null, hudInit: false, nsig: '' };
+
+/** 幅に収まるまでフォントを縮めて描く */
+function fitText(x, text, px, py, maxW, size, minSize, bold) {
+  x.font = (bold ? 'bold ' : '') + size + 'px sans-serif';
+  while (size > minSize && x.measureText(text).width > maxW) { size--; x.font = (bold ? 'bold ' : '') + size + 'px sans-serif'; }
+  x.fillText(text, px, py);
+}
+/** 文字単位で折り返して描く (日本語は単語区切りが無い)。描いた行数を返す。 */
+function wrapText(x, text, px, py, maxW, lineH, maxLines) {
+  let line = '', n = 0;
+  for (let i = 0; i < text.length; i++) {
+    const t = line + text[i];
+    if (x.measureText(t).width > maxW && line) { x.fillText(line, px, py + n * lineH); n++; line = text[i]; if (n >= maxLines) return n; }
+    else line = t;
+  }
+  if (line && n < maxLines) { x.fillText(line, px, py + n * lineH); n++; }
+  return n;
+}
+const trunc = (str, n) => { const a = Array.from(str); return a.length > n ? a.slice(0, n - 1).join('') + '…' : str; };   // コードポイント単位 (絵文字などのサロゲートペアを割らない)
+
+/** ルーム参加中のHUD下半分 (y=100〜)。ネット行1本 + 状態行 + 操作ヒント + 警告行。位置合わせ中はヒントを手順表示に置き換える。 */
+function drawHudNet(x, ctrl, noPlane) {
+  const now = performance.now(), W = 476;
+  x.textBaseline = 'top';
+  const ready = net.status === 'ready';
+  const kindTxt = ['未', '自動', '手動'][align.kind];
+  let line = (ready ? (net.slot + 1) + '番 ' : '') + '「' + trunc(net.room, 8) + '」';
+  if (net.role === 'pilot') line += ready ? '  接続' + net.nConn + (net.nSpec ? '+観戦' + net.nSpec : '') + '  位置合わせ:' + kindTxt : '  接続中…';
+  const sw = ready && net.slot >= 0;
+  if (sw) { x.fillStyle = hex6(PALETTE[net.slot % PALETTE.length]); x.fillRect(18, 103, 20, 20); x.strokeStyle = '#ffffffcc'; x.lineWidth = 2; x.strokeRect(18, 103, 20, 20); }
+  x.fillStyle = '#ffffff'; fitText(x, line, sw ? 46 : 18, 102, sw ? W - 28 : W, 20, 13, true);
+  // 状態行 (通知 > 再接続中 > 自分の位置合わせの状態)
+  const ntc = net.notice && now < net.noticeUntil ? net.notice : '';
+  let st = '', stCol = '#ffd479';
+  if (ntc) st = ntc;
+  else if (net.status === 'reconnecting') st = 'ルームサーバー切断：再接続中…（接続済みの相手とは継続）';
+  else if (ready && align.kind === 0 && net.role === 'pilot') { st = sharedSp.space ? '共有スペース取得中…　合わなければYで手動の位置合わせ' : 'Yボタンで位置合わせ（全員が同じ2点を同じ順で）'; stCol = '#b8c6d6'; }
+  else if (ready && align.kind === 2) { st = '位置合わせ：手動（2点間 ' + cal.manual.d.toFixed(2) + ' m）'; stCol = '#8dffd8'; }
+  else if (ready && align.kind === 1) { st = '位置合わせ：自動（共有スペース）'; stCol = '#8dffd8'; }
+  x.fillStyle = stCol; fitText(x, st, 18, 128, W, 18, 12, false);
+  if (cal.active) {
+    x.fillStyle = '#ffee66'; x.font = 'bold 19px sans-serif';
+    const n = wrapText(x, calStepText(), 18, 154, W, 24, 2);
+    x.fillStyle = '#b8c6d6';
+    fitText(x, '全員が同じ2点を同じ順（①→②）で。逆順だと180°ずれます', 18, 154 + n * 24 + 2, W, 17, 12, false);
+    if (cal.msg && now < cal.msgUntil) { x.fillStyle = '#ff9a7a'; fitText(x, cal.msg, 18, 226, W, 19, 12, true); }
+    else { x.fillStyle = '#b8c6d6'; fitText(x, '持ち手の中ほどを点に当てる　Y=キャンセル', 18, 228, W, 17, 12, false); }
+  } else {
+    x.fillStyle = '#b8c6d6';
+    if (ctrl) {
+      fitText(x, 'A=自動/手動  B=離着陸  X=HUD  Y=位置合わせ' + (align.kind === 2 ? '(長押し=解除)' : ''), 18, 154, W, 17, 12, false);
+      fitText(x, '右トリガー長押し=呼び戻し  左トリガー=ドローン視点', 18, 177, W, 17, 12, false);
+    } else {
+      fitText(x, 'コントローラー未検出: 自動モード（位置合わせ不可）', 18, 154, W, 17, 12, false);
+      fitText(x, 'ピンチ(選択)で離陸/着陸', 18, 177, W, 17, 12, false);
+    }
+    // 警告行: 他のパイロットが見えていない理由を具体的に (方式違い > 共有スペース確立待ち > 相手が未調整 > 2点の食い違いの疑い)
+    let warn = '';
+    if (ready && net.role === 'pilot') {
+      if (net.nOther > 0) warn = align.kind === 2 ? '方式違い: 「自動」の' + net.nOther + '台と互いに非表示（Y長押しで手動を解除）' : '方式違い: 「手動」の' + net.nOther + '台と互いに非表示（Yで手動に合わせる）';
+      else if (net.nWait > 0) warn = '共有スペース確立待ち: ' + net.nWait + '台（合わなければ全員Yで手動）';
+      else if (net.nNone > 0) warn = '位置合わせ待ち: ' + net.nNone + '台（相手側の位置合わせが未完了）';
+      else if (net.nDiff > 0) warn = '注意: ' + net.nDiff + '台と2点間の距離が違います（やり直し推奨）';
+    }
+    if (warn) { x.fillStyle = '#ffd479'; fitText(x, warn, 18, 202, W, 18, 12, true); }
+    if (cal.msg && now < cal.msgUntil) { x.fillStyle = '#ff9a7a'; fitText(x, cal.msg, 18, 226, W, 18, 12, true); }
+    else if (noPlane) { x.fillStyle = '#ffd479'; fitText(x, '平面なし: スペース設定で精度向上', 18, 226, W, 17, 12, false); }
+  }
+}
 
 function drawHud(alt, spd, noPlane, ctrl) {
   const x = hudCtx;
@@ -676,6 +931,7 @@ function drawHud(alt, spd, noPlane, ctrl) {
   x.fillStyle = '#ffffff'; x.font = 'bold 32px sans-serif';
   x.fillText('高度 ' + (alt / 100).toFixed(2) + ' m   速度 ' + (spd / 10).toFixed(1) + ' m/s', 18, 62);
   x.fillStyle = '#b8c6d6'; x.font = '20px sans-serif';
+  if (net.on) { try { drawHudNet(x, ctrl, noPlane); } catch (e) { /* HUDの下半分が欠けるだけ */ } hudTex.needsUpdate = true; return; }   // ルーム参加中は専用レイアウト (ソロの描画は下のまま不変)
   if (ctrl) {
     x.fillText('左: 上下=昇降 / 左右=旋回', 18, 104);
     x.fillText('右: 前後=前進後退 / 左右=横移動', 18, 128);
@@ -686,7 +942,9 @@ function drawHud(alt, spd, noPlane, ctrl) {
     x.fillText('コントローラー未検出: 自動モード', 18, 112);
     x.fillText('ピンチ(選択)で離陸/着陸', 18, 138);
   }
-  if (noPlane) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText('平面なし: スペース設定で精度向上', 18, 226); }
+  const ntc = net.notice && performance.now() < net.noticeUntil ? net.notice : '';    // ネットワーク機能が使えなかった時の短い通知 (ソロで飛行は継続)
+  if (ntc) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText(ntc, 18, 226); }
+  else if (noPlane) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText('平面なし: スペース設定で精度向上', 18, 226); }
   hudTex.needsUpdate = true;
 }
 
@@ -696,8 +954,9 @@ function updateHud(dt) {
   hud.acc = 0;
   const alt = Math.round((pos.y - sim.groundY) * 100), spd = Math.round(vel.length() * 10);
   const noPlane = renderer.xr.isPresenting && planes.length === 0, ctrl = input.hasController;
-  if (!hud.hudInit || alt !== hud.alt || spd !== hud.spd || sim.mode !== hud.mode || sim.state !== hud.state || noPlane !== hud.noPlane || ctrl !== hud.ctrl) {
-    hud.hudInit = true; hud.alt = alt; hud.spd = spd; hud.mode = sim.mode; hud.state = sim.state; hud.noPlane = noPlane; hud.ctrl = ctrl;
+  const nsig = net.on || net.notice ? netHudSig() : '';       // ソロでは常に '' (描画判定に影響しない)
+  if (!hud.hudInit || alt !== hud.alt || spd !== hud.spd || sim.mode !== hud.mode || sim.state !== hud.state || noPlane !== hud.noPlane || ctrl !== hud.ctrl || nsig !== hud.nsig) {
+    hud.hudInit = true; hud.alt = alt; hud.spd = spd; hud.mode = sim.mode; hud.state = sim.state; hud.noPlane = noPlane; hud.ctrl = ctrl; hud.nsig = nsig;
     drawHud(alt, spd, noPlane, ctrl);
   }
 }
@@ -818,17 +1077,26 @@ const ROOM_STYLE = {                                         // fill=面 / line=
   ceiling: { fill: new THREE.Color(0x1f2c3b), line: new THREE.Color(0x6a87a6) },
   table:   { fill: new THREE.Color(0x123a2d), line: new THREE.Color(0x2fb88c) },   // アクセント緑 #38d39f を低輝度で
 };
-const roomModel = new THREE.Group(); roomModel.name = 'roomModel'; monScene.add(roomModel);
-const roomFill = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
-  vertexColors: true, side: THREE.DoubleSide, toneMapped: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }));   // 線が面に埋もれないよう面を奥へ
-const roomLines = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ vertexColors: true, toneMapped: false }));
-roomFill.frustumCulled = roomLines.frustumCulled = false; roomFill.visible = roomLines.visible = false;
-roomModel.add(roomFill, roomLines);
-setLayer(roomModel, MON_LAYER);
+/** 部屋モデル (面+線) の入れ物。ドローン視点モニター(monScene, layer 3)と PC観戦(scene)で別々に作る。fillOpacity<1 なら面を半透明にする。 */
+function createRoomModel(parent, layer, fillOpacity) {
+  const group = new THREE.Group(); group.name = 'roomModel'; parent.add(group);
+  const translucent = fillOpacity != null && fillOpacity < 1;
+  const fill = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({
+    vertexColors: true, side: THREE.DoubleSide, toneMapped: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,   // 線が面に埋もれないよう面を奥へ
+    transparent: translucent, opacity: translucent ? fillOpacity : 1, depthWrite: !translucent }));
+  const lines = new THREE.LineSegments(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ vertexColors: true, toneMapped: false }));
+  fill.frustumCulled = lines.frustumCulled = false; fill.visible = lines.visible = false;
+  group.add(fill, lines);
+  setLayer(group, layer);
+  return { group, fill, lines };
+}
+const monRoom = createRoomModel(monScene, MON_LAYER);
+const roomModel = monRoom.group, roomFill = monRoom.fill, roomLines = monRoom.lines;
 
 const _fp = [], _fc = [], _lp = [], _lc = [];                // 再構築時のみ使う作業配列
 function pushCol(arr, c, k) { arr.push(c.r * k, c.g * k, c.b * k); }
-function pushSeg(ax, ay, az, bx, by, bz, c, k) { _lp.push(ax, ay, az, bx, by, bz); pushCol(_lc, c, k); pushCol(_lc, c, k); }
+let _lineGain = 1;                                           // 外形線/グリッドの明るさ倍率 (観戦ビューでは明るい部屋のプロジェクター向けに上げる。モニターは1)
+function pushSeg(ax, ay, az, bx, by, bz, c, k) { k *= _lineGain; _lp.push(ax, ay, az, bx, by, bz); pushCol(_lc, c, k); pushCol(_lc, c, k); }
 
 /** 平面1枚分 (局所XZ多角形 poly=[x,z,...], 姿勢 m, 局所の外接矩形) を 面+グリッド+外形 として積む */
 function addPoly(poly, m, x0, x1, z0, z1, kind) {
@@ -859,12 +1127,12 @@ function addPoly(poly, m, x0, x1, z0, z1, kind) {
   }
 }
 
-function planeKind(pl) {
+function planeKind(pl, floorY = room.floorY) {
   const lb = pl.label;
   if (lb === 'floor' || lb === 'ceiling' || lb === 'wall') return lb;   // Quest のセマンティックラベルがあれば優先
   if (!pl.horiz) return 'wall';
-  if (pl.y < room.floorY + 0.25) return 'floor';
-  if (pl.y > room.floorY + 1.8) return 'ceiling';
+  if (pl.y < floorY + 0.25) return 'floor';
+  if (pl.y > floorY + 1.8) return 'ceiling';
   return 'table';
 }
 
@@ -886,26 +1154,33 @@ function setModelGeo(mesh, pos, col) {
   mesh.visible = pos.length > 0;
 }
 
-function rebuildRoomModel() {
-  _fp.length = _fc.length = _lp.length = _lc.length = 0;
-  for (let i = 0; i < planes.length; i++) {
-    const pl = planes[i];
+/** 平面リスト (m, poly, minX.. を持つオブジェクトの配列) と、任意の部屋の箱 (box={min,max} 、無ければ null) から rm の面/線を作り直す。 */
+function buildRoomGeometry(rm, planeList, box, floorY, noCeiling, lineGain) {
+  _fp.length = _fc.length = _lp.length = _lc.length = 0; _lineGain = lineGain || 1;
+  for (let i = 0; i < planeList.length; i++) {
+    const pl = planeList[i];
     if (!pl.valid || !pl.poly) continue;
-    addPoly(pl.poly, pl.m, pl.minX, pl.maxX, pl.minZ, pl.maxZ, planeKind(pl));
-    pl.bm.set(pl.m.elements);
+    const kind = planeKind(pl, floorY);
+    if (noCeiling && kind === 'ceiling') continue;            // 観戦ビュー: 上から見下ろすので天井は描かない (全部を覆ってしまう)
+    addPoly(pl.poly, pl.m, pl.minX, pl.maxX, pl.minZ, pl.maxZ, kind);
   }
-  if (!room.fromPlanes) {                                    // 衝突に使っている部屋が箱の場合は、その6面を描く
-    const cx = (room.min.x + room.max.x) / 2, cy = (room.min.y + room.max.y) / 2, cz = (room.min.z + room.max.z) / 2;
-    const hx = (room.max.x - room.min.x) / 2, hy = (room.max.y - room.min.y) / 2, hz = (room.max.z - room.min.z) / 2;
-    addBoxFace(cx, room.min.y, cz, 1, 0, 0, 0, 0, 1, hx, hz, 'floor');
-    addBoxFace(cx, room.max.y, cz, 1, 0, 0, 0, 0, 1, hx, hz, 'ceiling');
-    addBoxFace(cx, cy, room.min.z, 1, 0, 0, 0, 1, 0, hx, hy, 'wall');
-    addBoxFace(cx, cy, room.max.z, 1, 0, 0, 0, 1, 0, hx, hy, 'wall');
-    addBoxFace(room.min.x, cy, cz, 0, 0, 1, 0, 1, 0, hz, hy, 'wall');
-    addBoxFace(room.max.x, cy, cz, 0, 0, 1, 0, 1, 0, hz, hy, 'wall');
+  if (box) {                                                 // 衝突に使っている部屋が箱の場合は、その6面を描く
+    const cx = (box.min.x + box.max.x) / 2, cy = (box.min.y + box.max.y) / 2, cz = (box.min.z + box.max.z) / 2;
+    const hx = (box.max.x - box.min.x) / 2, hy = (box.max.y - box.min.y) / 2, hz = (box.max.z - box.min.z) / 2;
+    addBoxFace(cx, box.min.y, cz, 1, 0, 0, 0, 0, 1, hx, hz, 'floor');
+    addBoxFace(cx, box.max.y, cz, 1, 0, 0, 0, 0, 1, hx, hz, 'ceiling');
+    addBoxFace(cx, cy, box.min.z, 1, 0, 0, 0, 1, 0, hx, hy, 'wall');
+    addBoxFace(cx, cy, box.max.z, 1, 0, 0, 0, 1, 0, hx, hy, 'wall');
+    addBoxFace(box.min.x, cy, cz, 0, 0, 1, 0, 1, 0, hz, hy, 'wall');
+    addBoxFace(box.max.x, cy, cz, 0, 0, 1, 0, 1, 0, hz, hy, 'wall');
   }
-  setModelGeo(roomFill, _fp, _fc); setModelGeo(roomLines, _lp, _lc);
-  _fp.length = _fc.length = _lp.length = _lc.length = 0;
+  setModelGeo(rm.fill, _fp, _fc); setModelGeo(rm.lines, _lp, _lc);
+  _fp.length = _fc.length = _lp.length = _lc.length = 0; _lineGain = 1;
+}
+
+function rebuildRoomModel() {
+  buildRoomGeometry(monRoom, planes, room.fromPlanes ? null : room, room.floorY);
+  for (let i = 0; i < planes.length; i++) { const pl = planes[i]; if (pl.valid && pl.poly) pl.bm.set(pl.m.elements); }
   mon.built = true; mon.rev = planesRev; mon.fromPlanes = room.fromPlanes; mon.floorY = room.floorY;
   mon.box[0] = room.min.x; mon.box[1] = room.min.y; mon.box[2] = room.min.z; mon.box[3] = room.max.x; mon.box[4] = room.max.y; mon.box[5] = room.max.z;
 }
@@ -1032,6 +1307,7 @@ function initAudio() {
 }
 
 function stopAudio() {
+  remoteAudioStop();                                        // 他機の音も (ルーム参加時のみ存在)
   const ctx = audio.ctx, master = audio.master;
   audio.ctx = null; audio.oscs.length = 0; audio.master = null;
   if (!ctx) return;
@@ -1077,7 +1353,7 @@ function shape(v) {
 function edge(name, pressed) { const was = prevBtn[name]; prevBtn[name] = pressed; return pressed && !was; }
 
 /** xr-standard: axes[2],[3]=サムスティック、buttons[0]=トリガー、[4]=A/X、[5]=B/Y。前倒し=axes[3]が負 */
-function readXRInputs(session) {
+function readXRInputs(session, xrFrame, ref) {
   let gotL = false, gotR = false;
   const srcs = session.inputSources;
   input.lx = input.ly = input.rx = input.ry = 0; input.recall = false;
@@ -1090,21 +1366,25 @@ function readXRInputs(session) {
       gotL = true; input.lx = shape(sx); input.ly = shape(-sy);   // 上=上昇, 右=右旋回
       if (edge('X', !!(b[4] && b[4].pressed))) toggleHud();
       if (edge('L', !!(b[0] && b[0].pressed))) toggleMonitor();   // 左トリガー = ドローン視点モニター
+      if (net.on && net.role === 'pilot') netLeftY(!!(b[5] && b[5].pressed));   // 左Y = 位置合わせの開始/中止・長押しで手動解除 (ルーム参加時のみ)
     } else if (s.handedness === 'right') {
       gotR = true; input.rx = shape(sx); input.ry = shape(-sy);   // 前=前進, 右=右移動
       if (edge('A', !!(b[4] && b[4].pressed))) toggleMode();
       if (edge('B', !!(b[5] && b[5].pressed))) toggleFlight();
       input.recall = !!(b[0] && b[0].pressed);
+      if (net.on && net.role === 'pilot') netRightController(s, b, xrFrame, ref);   // 位置合わせ中は呼び戻しを抑止し、トリガーで点を記録
     }
   }
-  if (!gotL) { prevBtn.X = false; prevBtn.L = false; }
-  if (!gotR) { prevBtn.A = false; prevBtn.B = false; }
+  if (!gotL) { prevBtn.X = false; prevBtn.L = false; prevBtn.Y = false; }
+  if (!gotR) { prevBtn.A = false; prevBtn.B = false; prevBtn.RT = false; }
   input.hasController = gotL || gotR;
 }
 
 const keys = new Set();
 window.addEventListener('keydown', (e) => {
   if (renderer.xr.isPresenting) return;
+  if (e.target && e.target.tagName === 'INPUT') return;      // ルーム名入力中のキーは操縦に使わない
+  if (spec.on) { if (!e.repeat) specKey(e); return; }        // PC観戦モードのキー
   if (e.code.startsWith('Arrow')) e.preventDefault();
   if (e.repeat) return;
   keys.add(e.code);
@@ -1122,15 +1402,23 @@ function readKeyboard() {
 }
 
 // デスクトップ用の簡易マウスオービット
-const orbit = { th: 0, ph: 0.25, r: 3.2, tx: 0, ty: 0.9, tz: -1, drag: false, x: 0, y: 0 };
-renderer.domElement.addEventListener('pointerdown', (e) => { orbit.drag = true; orbit.x = e.clientX; orbit.y = e.clientY; });
+// (観戦モードでは範囲を広げ、右ドラッグ/Shift+ドラッグで平行移動する。プレビューの既定値と挙動は従来どおり)
+const orbit = { th: 0, ph: 0.25, r: 3.2, tx: 0, ty: 0.9, tz: -1, drag: false, pan: false, x: 0, y: 0, rMin: 0.8, rMax: 8, phMin: -0.2, phMax: 1.4 };
+renderer.domElement.addEventListener('pointerdown', (e) => { orbit.drag = true; spec.userCam = true; orbit.pan = spec.on && (e.button === 2 || e.shiftKey); orbit.x = e.clientX; orbit.y = e.clientY; });
+renderer.domElement.addEventListener('contextmenu', (e) => { if (spec.on) e.preventDefault(); });
 window.addEventListener('pointerup', () => { orbit.drag = false; });
 window.addEventListener('pointermove', (e) => {
   if (!orbit.drag) return;
-  orbit.th -= (e.clientX - orbit.x) * 0.006; orbit.ph = clamp(orbit.ph + (e.clientY - orbit.y) * 0.006, -0.2, 1.4);
+  const dx = e.clientX - orbit.x, dy = e.clientY - orbit.y;
+  if (orbit.pan) {
+    const k = orbit.r * 0.0016, c = camera.quaternion;
+    tmpV.set(1, 0, 0).applyQuaternion(c); tmpV2.set(0, 1, 0).applyQuaternion(c);
+    orbit.tx += (-tmpV.x * dx + tmpV2.x * dy) * k; orbit.ty += (-tmpV.y * dx + tmpV2.y * dy) * k; orbit.tz += (-tmpV.z * dx + tmpV2.z * dy) * k;
+    spec.follow = -1;
+  } else { orbit.th -= dx * 0.006; orbit.ph = clamp(orbit.ph + dy * 0.006, orbit.phMin, orbit.phMax); }
   orbit.x = e.clientX; orbit.y = e.clientY;
 });
-renderer.domElement.addEventListener('wheel', (e) => { orbit.r = clamp(orbit.r * (1 + Math.sign(e.deltaY) * 0.08), 0.8, 8); e.preventDefault(); }, { passive: false });
+renderer.domElement.addEventListener('wheel', (e) => { spec.userCam = true; orbit.r = clamp(orbit.r * (1 + Math.sign(e.deltaY) * 0.08), orbit.rMin, orbit.rMax); e.preventDefault(); }, { passive: false });
 function updateOrbit() {
   const cp = Math.cos(orbit.ph);
   camera.position.set(orbit.tx + orbit.r * cp * Math.sin(orbit.th), orbit.ty + orbit.r * Math.sin(orbit.ph), orbit.tz + orbit.r * cp * Math.cos(orbit.th));
@@ -1168,14 +1456,15 @@ function placeDroneInitial() {
 function frame(time, xrFrame) {
   const now = time * 0.001;
   const dt = clamp(now - lastT, 0, 0.05); lastT = now;
+  if (spec.on) { try { specFrame(dt, performance.now()); } catch (e) { net.errN++; } renderer.render(scene, camera); return; }   // PC観戦モード: 自機なし。更新が失敗しても描画は続ける
   const xr = renderer.xr.isPresenting;
 
   // --- 入力・頭位置・平面 ---
   if (xr) {
     if (xrFrame && xrSession) {
       const ref = renderer.xr.getReferenceSpace();
-      if (ref) { updateHeadXR(xrFrame, ref); updatePlanes(xrFrame, ref); }
-      readXRInputs(xrSession);
+      if (ref) { updateHeadXR(xrFrame, ref); updatePlanes(xrFrame, ref); if (net.on) netXrFrame(xrFrame, ref); }   // netXrFrame は内部で例外を握りつぶす
+      readXRInputs(xrSession, xrFrame, ref);
     }
   } else {
     readKeyboard(); updateOrbit();
@@ -1191,7 +1480,7 @@ function frame(time, xrFrame) {
   if (roomTimer <= 0) { roomTimer = C.ROOM_REFRESH; if (xr && planeFeature) recomputeRoom(); else if (!xr || !planeFeature) setFallbackRoom(); mon.check = true; }
 
   // --- 固定タイムステップ ---
-  if (placed) {
+  if (placed && !dbg.freeze) {
     acc += dt;
     let n = 0;
     while (acc >= C.DT && n < C.MAX_STEPS) { stepSim(C.DT); acc -= C.DT; n++; }
@@ -1229,6 +1518,7 @@ function frame(time, xrFrame) {
   shadowMat.opacity = 0.6 * clamp(1 - h / 2.2, 0, 1);
   shadowBias.value = xr && renderer.xr.hasDepthSensing() ? C.SHADOW_DEPTH_BIAS : 0;
 
+  if (net.on) { try { netFrame(avg); } catch (e) { netPanic(); } }   // ルーム参加中のみ: 送信・他機の表示・音。失敗してもフレームループは止めない (ソロへ)
   desk.visible = !xr;
   hudMesh.visible = sim.hudOn;
   updateHud(dt); updateHudFloat();
@@ -1250,9 +1540,11 @@ function resetWorld() {
   planesRev++;
   resetMonitor();
   autoTakeoffDone = false; noCtrlT = 0;
+  netSessionReset();
 }
 
-async function startXR() {
+let sharedBlocked = false;                                   // 'shared' 付きの requestSession が拒否された (ページを閉じるまで記憶)
+async function startXR(roomName) {
   renderer.xr.setReferenceSpaceType('local-floor');
   // 深度オクルージョン: three r170 は 'depth-sensing' が許可されると XRWebGLBinding.getDepthInformation() の
   // GPUテクスチャを自動で深度プリパスに使う (アプリ側の追加コード不要)。XRWebGLBinding が無い環境で許可されると
@@ -1262,7 +1554,23 @@ async function startXR() {
     init.optionalFeatures.push('depth-sensing');
     init.depthSensing = { usagePreference: ['gpu-optimized'], dataFormatPreference: [] };
   }
-  const session = await navigator.xr.requestSession('immersive-ar', init);
+  // ルーム使用時のみ Quest の共有スペース(experimental)を任意機能として要求。ここまで await は無い (= タップのユーザー操作の有効期間内に requestSession が出る)。
+  // PeerJS の読み込み等のネットワーク処理は全てセッション開始後 (下の netJoin) で、開始を遅らせない。
+  const wantShared = !!roomName && !sharedBlocked;
+  if (wantShared) init.optionalFeatures.push('shared');
+  let session;
+  try { session = await navigator.xr.requestSession('immersive-ar', init); }
+  catch (err) {
+    // ユーザー操作なし (SecurityError: 読み込み時の自動開始など) は 'shared' のせいではない → そのまま上へ (次のタップでも 'shared' を付ける)。
+    if (!wantShared || (err && err.name === 'SecurityError')) throw err;
+    // それ以外は 'shared' が原因かもしれない: 外して再試行。ただしこの時点でユーザー操作の有効期間が切れていることがある。
+    init.optionalFeatures = init.optionalFeatures.filter((f) => f !== 'shared');
+    try { session = await navigator.xr.requestSession('immersive-ar', init); sharedBlocked = true; }   // 外したら通った → 以後このページでは 'shared' を付けない
+    catch (err2) {
+      if (err2 && err2.name === 'SecurityError') { sharedBlocked = true; const e = new Error('needTap'); e.needTap = true; throw e; }   // 操作切れ: 次のタップは 'shared' なしで一発で通す
+      throw err2;                                              // 'shared' を外しても同じく失敗 → 原因は別 (sharedBlocked は立てない)
+    }
+  }
   xrSession = session;
   resetWorld();
   session.addEventListener('end', onXREnd);
@@ -1279,9 +1587,19 @@ async function startXR() {
   startEl.classList.add('hidden');
   placeHud();
   renderer.setAnimationLoop(frame);
+  if (roomName) {                                            // ルーム参加は非同期・失敗してもソロ飛行は続く
+    try {
+      net.retryN = 0;
+      const pj = netJoin(roomName, 'pilot'); if (pj && pj.catch) pj.catch(() => {});
+      if (wantShared) netInitShared(session);
+      const rs = renderer.xr.getReferenceSpace();              // リセンター検出 (手動の位置合わせが無効になる)
+      if (rs && typeof rs.addEventListener === 'function') rs.addEventListener('reset', () => { try { netOnLocalReset(); } catch (e) { /* ignore */ } });
+    } catch (e) { /* ignore */ }
+  }
 }
 
 function onXREnd() {
+  netLeave(false);                                           // 退室 (bye を送ってから接続を閉じる)。他機・音・タグは即座に破棄
   xrSession = null;
   stopAudio();
   renderer.setAnimationLoop(null);
@@ -1294,24 +1612,1212 @@ function onXREnd() {
 }
 
 window.addEventListener('resize', () => {
+  if (spec.on) { spec.vw = -1; specLayout(); return; }       // 観戦モードは名簿を除いた領域に描く
   camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
   if (renderer.xr.isPresenting) return;                      // XR中はthreeがサイズを管理 (setSizeは警告になる)
   renderer.setSize(window.innerWidth, window.innerHeight);
   placeHud();
 });
 
+/* =====================================================================
+ * 17. マルチプレイ (任意)  ルーム名が指定された時だけ動く。ソロでは net.on=false のまま、通信も PeerJS の読み込みも一切行わない。
+ *   ・WebRTCメッシュ (PeerJS 1.5.4, 既定のシグナリングサーバー)。ピアID = mrdrone1-<ルーム名のハッシュ>-<スロット0..23>。
+ *   ・各ペアに DataConnection は1本だけ (serialization:'raw' = 文字列JSON)。メタ(hello/gossip/平面/ping)も20Hzの状態も同じ1本で送る。
+ *     チャネルは「順不同・再送あり」(PeerJS の reliable:false)。PeerJS 1.5.4 は createDataChannel へ {ordered: !!reliable} しか渡さず、
+ *     maxRetransmits / maxPacketLifeTime は指定できない (dist/peerjs.js の Negotiator で確認)。つまり選べるのは 順序保証あり/なし だけ。
+ *     順序保証ありだと、Wi-Fiで1パケット落ちるたびに再送が届くまで後続の状態が全部止まる (head-of-line blocking)。順不同なら
+ *     落ちた1個以外はすぐ届く。遅れて届いた古い状態はシーケンス番号で捨てる。そのため全メッセージは順不同・重複到着に耐える作りにしてある。
+ *     さらに送信側は、送信バッファが NET_TX_BACKLOG を超えて溜まっている相手へは状態を送らない (古い状態を溜めない)。
+ *   ・座標は「共有座標系」で送る。共有座標系 = yaw+水平の平行移動だけの剛体変換 sharedFromLocal で自機のlocal-floor座標と結ぶ。
+ *     優先順位: ① 手動2点キャリブレーション ② Quest共有スペース(experimental 'shared') ③ なし(恒等・未調整)。
+ *     高さは変換しない: どちらの方式でも各ヘッドセットの local-floor の床を y=0 とする (理由は netSharedPose のコメント)。
+ *   ・相手探し: スロット取得時に「使用中」だった番号へ接続 → 残りを少しずつ試す (netRescan) → ゴシップ (接続中スロットの交換) → 切れた相手への再試行 (net.lost)。
+ *     生存確認はサーバーに頼らない: 1Hzのping。3秒無通信で他機をフェードアウト、15秒で切り離し。自分が止まっていた場合は自分の時計で相手を切らない (netTick)。
+ *   ・受信は全て信頼しない: 型検査・NaN/Infinity拒否・座標クランプ・個数/サイズ上限。eval/innerHTML には絶対に入れない。
+ * ===================================================================== */
+const PEERJS_URL = 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js';
+const PEER_PREFIX = 'mrdrone1-';
+const NET_KIND_NONE = 0, NET_KIND_AUTO = 1, NET_KIND_MANUAL = 2;
+const SNAP_N = 12, SNAP_STRIDE = 14;                         // 補間用スナップショット: [t, px,py,pz, qx,qy,qz,qw, hx,hy,hz,hyaw, rpm, -]
+
+const net = {
+  on: false, role: 'pilot', room: '', hash: '', slot: -1, status: 'idle', statusText: '', gen: 0, ready: false, sid: '',
+  peer: null, peers: new Map(), list: [], tried: new Map(), scanQ: [], pending: new Map(),
+  seq: 0, txAcc: 0, txPause: false, txCount: 0, tickTimer: 0, pingAt: 0, gossipAt: 0, reconnectAt: 0, reconnectN: 0,
+  notice: '', noticeUntil: 0, nConn: 0, nSpec: 0, unaligned: 0, planesTxAt: 0, planesTxRev: -1, planesTxSig: '',
+  perfMs: 0, perfN: 0, rxCount: 0, rxBad: 0, frameT: 0,
+  lost: new Map(), tickAt: 0, retryTimer: 0, retryN: 0, errN: 0,
+  nNone: 0, nOther: 0, nWait: 0, nDiff: 0,                      // 位置合わせが合っていない他パイロットの内訳 (HUD用)
+  aud: [], audN: 0, planesRev: 0,
+};
+const dbg = { freeze: false, preTx: null, postNet: null };    // ?debug のテスト用: シミュレーション停止 / 送信直前・受信側描画直後のフック
+
+/* ---- 共有座標系 (sharedFromLocal / localFromShared): shared = Ry(yaw) * local + t ---- */
+const makeXf = () => ({ yaw: 0, c: 1, s: 0, tx: 0, ty: 0, tz: 0 });
+const sFL = makeXf(), lFS = makeXf();
+function setXf(T, yaw, tx, ty, tz) { T.yaw = yaw; T.c = Math.cos(yaw); T.s = Math.sin(yaw); T.tx = tx; T.ty = ty; T.tz = tz; }
+function setSharedFromLocal(yaw, tx, ty, tz) {
+  setXf(sFL, yaw, tx, ty, tz);
+  setXf(lFS, -yaw, -(sFL.c * tx - sFL.s * tz), -ty, -(sFL.s * tx + sFL.c * tz));   // 逆変換: local = Ry(-yaw) * (shared - t)
+}
+setSharedFromLocal(0, 0, 0, 0);
+function xfPoint(T, out, x, y, z) { return out.set(T.c * x + T.s * z + T.tx, y + T.ty, -T.s * x + T.c * z + T.tz); }
+const _xq = new THREE.Quaternion();
+function xfQuat(T, out, q) { _xq.setFromAxisAngle(Y_AXIS, T.yaw).multiply(q); return out.copy(_xq); }
+
+const align = { kind: NET_KIND_NONE, id: '', forced: false, rev: 0, jump: false };   // 自分の位置合わせの記述子 (相手へ送る)。rev: 座標系が不連続に変わるたびに+1
+const sharedSp = { space: null, uuid: '', valid: false, yaw: 0, tx: 0, ty: 0, tz: 0, err: 0 };   // Quest共有スペース (experimental)
+const cal = {                                                  // 手動2点キャリブレーション
+  active: false, step: 0, p: [new THREE.Vector3(), new THREE.Vector3()], live: new THREE.Vector3(), liveOk: false,
+  msg: '', msgUntil: 0, recT: [0, 0], lockRecall: false, mk: null, mkUntil: 0, yDown: 0, yLong: false,
+  manual: { valid: false, yaw: 0, tx: 0, ty: 0, tz: 0, d: 0 },
+};
+
+function updateAlignment() {
+  if (align.forced) return;
+  let kind = NET_KIND_NONE, id = '';
+  if (cal.manual.valid) { kind = NET_KIND_MANUAL; id = 'm' + Math.round(cal.manual.d * 100); setSharedFromLocal(cal.manual.yaw, cal.manual.tx, cal.manual.ty, cal.manual.tz); }   // id = 2点間の距離[cm] (相手との食い違い検出用。一致判定には使わない)
+  else if (sharedSp.valid) { kind = NET_KIND_AUTO; id = sharedSp.uuid; setSharedFromLocal(sharedSp.yaw, sharedSp.tx, sharedSp.ty, sharedSp.tz); }
+  else setSharedFromLocal(0, 0, 0, 0);
+  // 座標系が不連続に変わった (方式/UUIDの変化・再キャリブレーション・共有スペースのリセット): rev を進めて相手に知らせる。
+  // 受信側は rev が変わったら補間バッファを捨てる → 旧座標系と新座標系の間を補間して他機が「流れる」ことがない。
+  if (kind !== align.kind || id !== align.id || align.jump) { align.rev = (align.rev + 1) % 1000000000; align.jump = false; net.planesTxSig = ''; }
+  align.kind = kind; align.id = id;
+}
+/** 自分と相手 (kind/id) が同じ共有座標系か。manual同士は「全員が同じ2点に同じ順で触れた」前提で一致扱い (id は見ない)。auto同士は共有スペースのUUIDが同じ時だけ。 */
+function isAlignedWith(kind, id) { return kind !== NET_KIND_NONE && kind === align.kind && (kind === NET_KIND_MANUAL || (id !== '' && id === align.id)); }
+
+/* ---- 手動2点キャリブレーション (左Y=開始/中止, 右トリガー=点を記録) ---- */
+function calStepText() { return cal.step === 0 ? '位置合わせ 1/2：基準点①に右コントローラーを当てて右トリガー' : '位置合わせ 2/2：基準点②に右コントローラーを当てて右トリガー'; }
+function calMsg(text, ms) { cal.msg = text; cal.msgUntil = performance.now() + ms; }
+function calMarkers() {
+  if (cal.mk) return cal.mk;
+  const geo = new THREE.SphereGeometry(0.02, 14, 10);
+  const mk = [0xffee00, 0x00ffc8, 0x00ffc8].map((c) => {
+    const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: c, toneMapped: false, depthTest: false, transparent: true }));
+    m.renderOrder = 998; m.visible = false; scene.add(m); return m;
+  });
+  cal.mk = mk; return mk;
+}
+function calStart() { cal.active = true; cal.step = 0; cal.msg = ''; const mk = calMarkers(); mk[1].visible = mk[2].visible = false; cal.mkUntil = 0; }
+function calCancel() { if (cal.active) cal.lockRecall = true; cal.active = false; cal.msg = ''; if (cal.mk) for (const m of cal.mk) m.visible = false; }   // 中止時に右トリガーを握っていても、離すまで呼び戻しは効かせない
+function calToggle() { if (!net.on || net.role !== 'pilot') return; if (cal.active) calCancel(); else calStart(); }
+/** 2点(局所座標)から manual を解く。水平距離が近すぎれば false。
+ *  共有座標系: 原点=1番目の点の真下の床 (y=0)、+X=1番目→2番目の水平方向、+Y=上、右手系 (回転のみなので鏡像にはならない)。
+ *  高さは各自の local-floor の床 (y=0) をそのまま使う (ty=0)。コントローラーを当てた高さは使わない (持ち方の差が出ないように)。
+ *  注意: 2点の順番を逆に触った人は原点が2番目の点・向きが180°逆の座標系になる (鏡像ではなく点対称のずれ)。HUDで順番を明示している。 */
+function calSolve(p1, p2) {
+  const dx = p2.x - p1.x, dz = p2.z - p1.z, d = Math.hypot(dx, dz);
+  if (!(d >= C.CAL_MIN_DIST)) return false;
+  const c = dx / d, s = dz / d;                                // Ry(yaw) が (dx,dz) を (+d,0) へ送る: c=dx/d, s=dz/d
+  const m = cal.manual;
+  m.yaw = Math.atan2(s, c); m.tx = -(c * p1.x + s * p1.z); m.ty = 0; m.tz = -(-s * p1.x + c * p1.z); m.d = d; m.valid = true; align.jump = true;
+  return true;
+}
+function calRecord(x, y, z) {
+  const now = performance.now(), mk = calMarkers();
+  cal.p[cal.step].set(x, y, z); cal.recT[cal.step] = now;
+  mk[1 + cal.step].position.set(x, y, z); mk[1 + cal.step].visible = true; cal.mkUntil = now + 3500;
+  if (cal.step === 0) { cal.step = 1; return; }
+  if (!calSolve(cal.p[0], cal.p[1])) {
+    cal.msg = '2点が近すぎます（30cm以上離す）。1番目からやり直し'; cal.msgUntil = now + 3500; cal.step = 0; mk[1].visible = mk[2].visible = false; return;
+  }
+  cal.active = false; cal.lockRecall = true; cal.msg = '';          // 完了はHUDの「位置合わせ:手動」で示す
+}
+function calUpdateMarkers(now) {
+  const mk = cal.mk;
+  if (!mk) return;
+  mk[0].visible = cal.active && cal.liveOk;
+  if (mk[0].visible) mk[0].position.copy(cal.live);
+  if (!cal.active && cal.mkUntil && now > cal.mkUntil) { mk[1].visible = mk[2].visible = false; cal.mkUntil = 0; }
+}
+/** 右コントローラー: キャリブ中は グリップ位置を追跡し、トリガー(エッジ)で記録。呼び戻しは抑止。 */
+function netRightController(src, b, xrFrame, ref) {
+  try {
+    const trig = !!(b[0] && b[0].pressed), rt = edge('RT', trig);
+    if (cal.active) {
+      cal.liveOk = false;
+      if (xrFrame && ref && src.gripSpace) {
+        const gp = xrFrame.getPose(src.gripSpace, ref);
+        if (gp) { const p = gp.transform.position; if (Number.isFinite(p.x + p.y + p.z)) { cal.live.set(p.x, p.y, p.z); cal.liveOk = true; } }
+      }
+      if (rt && cal.liveOk) calRecord(cal.live.x, cal.live.y, cal.live.z);
+      input.recall = false;
+    } else if (cal.lockRecall) { if (!trig) cal.lockRecall = false; else input.recall = false; }
+  } catch (e) { netPanic(); }
+}
+/** 左Y: 押した瞬間=位置合わせの開始/中止。1.5秒長押し=手動の位置合わせを解除 (共有スペースがあれば自動へ戻る)。 */
+function netLeftY(pressed) {
+  try {
+    const now = performance.now();
+    if (edge('Y', pressed)) { cal.yDown = now; cal.yLong = false; calToggle(); }
+    else if (pressed && !cal.yLong && cal.yDown && now - cal.yDown > 1500) {
+      cal.yLong = true; calCancel();
+      if (cal.manual.valid) { cal.manual.valid = false; align.jump = true; calMsg('手動の位置合わせを解除しました', 4000); }
+    }
+    if (!pressed) cal.yDown = 0;
+  } catch (e) { netPanic(); }
+}
+/** local-floor がリセットされた (Questのリセンター等): 手動の位置合わせは原点ごとずれるので無効にして、やり直しを促す。共有スペース(自動)は毎フレーム姿勢を取り直すので影響なし。 */
+function netOnLocalReset() {
+  if (!net.on) return;
+  align.jump = true;
+  if (cal.manual.valid) { cal.manual.valid = false; calMsg('リセンターされました。Yで位置合わせをやり直してください', 8000); }
+}
+/** ネットワーク側のコードがフレームループ内で例外を出した時の最終防壁: ルームを抜けてソロ飛行を続ける (フレームループは絶対に止めない)。 */
+function netPanic() {
+  net.errN++;
+  try { netFail(net.gen, 'ネットワークエラー。1人で飛行します', 'ネットワークエラー'); } catch (e) { /* ignore */ }
+  net.on = false;
+}
+
+/* ---- Quest共有スペース (Shared Spaces API: experimental・未検証。全て防御的に) ---- */
+const cleanId = (v) => (typeof v === 'string' ? v.slice(0, 64).replace(/[^0-9A-Za-z_\-]/g, '_') : '');
+const sharedUuid = (sp) => { let v = ''; try { v = sp.uuid || sp.UUID || sp.id || ''; } catch (e) { v = ''; } return cleanId(v); };   // 説明書きでは「UUID文字列を持つ」。プロパティ名の揺れに備える
+async function netInitShared(session) {
+  try {
+    if (typeof session.requestReferenceSpace !== 'function') return;
+    const sp = await Promise.race([session.requestReferenceSpace('shared'), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))]);
+    if (!sp || xrSession !== session) return;
+    sharedSp.space = sp; sharedSp.uuid = ''; sharedSp.valid = false; sharedSp.err = 0;
+    // reset: 他のヘッドセットと同じスペースが確立した時などに発火し、座標系とUUIDが新しくなる。次のフレームで取り直す (valid=false → スナップ)。
+    if (typeof sp.addEventListener === 'function') sp.addEventListener('reset', () => { sharedSp.valid = false; });
+  } catch (e) { sharedSp.space = null; }                       // 未対応/拒否: 共有スペースなし (手動のみ)
+}
+/** 毎フレーム: frame.getPose(shared, localFloor) = 「共有スペース→自分のlocal-floor」の姿勢 (p_local = M * p_shared) を取り、
+ *  yaw と水平の平行移動だけ取り出して sharedFromLocal (その逆変換) を作る。null/例外なら直前の良い値を保つ。
+ *  ・傾きは捨てる: yaw は X軸の像の水平成分から (小さな傾きがあっても方位は変わらない)。X軸がほぼ鉛直という異常時だけ Z軸の像を使う。
+ *  ・高さは共有スペースの y を使わず、各自の local-floor の床 (y=0) に固定する (ty=0)。理由: 共有スペースの原点は「最初に作ったヘッドセットの
+ *    原点」としか定義されておらず高さの意味が保証されない。各自の床を y=0 に揃えておけば、着陸した他機は必ず自分の床の上に見え、影も自分の床に落ちる。
+ *    代償は、ヘッドセット間の床推定の差 (通常 数cm) がそのまま高さの食い違いになること。手動2点キャリブレーションも同じ方針 (ty=0) なので両方式で一貫する。
+ *  ・UUIDが取れない共有スペースは使わない (相手と同じスペースか確認できないため)。確立前の「仮の共有スペース」は各自UUIDが違うので自然に不一致=非表示になる。
+ *  ・毎フレームの微小な揺れは一次遅れでならし、大きく飛んだ時 (リセット等) だけ即座に切り替えて align.rev を進める。 */
+function netSharedPose(xrFrame, ref) {
+  const sp = sharedSp.space;
+  if (!sp) return;
+  let pose = null;
+  try { pose = xrFrame.getPose(sp, ref); } catch (e) { if (++sharedSp.err > 20) { sharedSp.space = null; sharedSp.valid = false; } return; }
+  if (!pose || !pose.transform || !pose.transform.matrix) return;
+  const m = pose.transform.matrix;
+  for (let i = 0; i < 16; i++) if (!Number.isFinite(m[i])) return;
+  let phi;                                                     // localFromShared = Ry(phi) + t_l
+  if (Math.hypot(m[0], m[2]) > 0.3) phi = Math.atan2(-m[2], m[0]);        // X軸の像から
+  else if (Math.hypot(m[8], m[10]) > 0.3) phi = Math.atan2(m[8], m[10]);  // Z軸の像から
+  else return;
+  const uuid = sharedUuid(sp);
+  if (!uuid) { sharedSp.valid = false; return; }
+  const th = -phi, c = Math.cos(th), s = Math.sin(th);        // sharedFromLocal: shared = Ry(th) * (local - t_l)
+  const tx = -(c * m[12] + s * m[14]), tz = -(-s * m[12] + c * m[14]);
+  const dy = angleDiff(th, sharedSp.yaw), dx = tx - sharedSp.tx, dz = tz - sharedSp.tz;
+  if (!sharedSp.valid || uuid !== sharedSp.uuid || Math.abs(dy) > 0.05 || Math.hypot(dx, dz) > 0.15) {
+    sharedSp.yaw = th; sharedSp.tx = tx; sharedSp.tz = tz; align.jump = true;
+  } else { sharedSp.yaw += dy * 0.15; sharedSp.tx += dx * 0.15; sharedSp.tz += dz * 0.15; }
+  sharedSp.ty = 0; sharedSp.uuid = uuid; sharedSp.valid = true;
+}
+function netXrFrame(xrFrame, ref) { try { if (sharedSp.space) netSharedPose(xrFrame, ref); } catch (e) { sharedSp.space = null; sharedSp.valid = false; } }
+
+function netSessionReset() {                                   // XRセッションの開始/終了ごと: local-floor原点が変わるので位置合わせは破棄
+  calCancel(); cal.manual.valid = false; cal.lockRecall = false; cal.liveOk = false;
+  sharedSp.space = null; sharedSp.valid = false; sharedSp.uuid = ''; sharedSp.err = 0;
+  prevBtn.Y = prevBtn.RT = false;
+  cal.yDown = 0; align.jump = true;
+  if (!align.forced) { align.kind = NET_KIND_NONE; align.id = ''; setSharedFromLocal(0, 0, 0, 0); }
+}
+
+/* ---- ルーム名 → ピアID ---- */
+function hashRoom(name) {                                      // cyrb53系の53bit(上位48bitを16進12桁)。UTF-16コード単位で処理するので任意のUnicodeを受け付ける
+  let s = String(name);
+  try { s = s.normalize('NFKC'); } catch (e) { /* ignore */ }
+  s = s.trim().toLowerCase();
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) { const ch = s.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return ((h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0')).slice(0, 12);
+}
+const peerIdOf = (slot) => PEER_PREFIX + net.hash + '-' + slot;
+function slotOfPeerId(id) {
+  if (typeof id !== 'string') return -1;
+  const pre = PEER_PREFIX + net.hash + '-';
+  if (!id.startsWith(pre)) return -1;
+  const t = id.slice(pre.length);
+  if (!/^\d{1,2}$/.test(t)) return -1;
+  const n = +t; return n >= 0 && n < C.NET_SLOTS ? n : -1;
+}
+
+/* ---- ライブラリの遅延読み込み (ルーム使用時のみ) ---- */
+function loadPeerJS() {
+  if (window.Peer) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let done = false, tm = 0;
+    const s = document.createElement('script');
+    const fin = (ok) => { if (done) return; done = true; clearTimeout(tm); if (!ok) s.remove(); resolve(ok && !!window.Peer); };
+    s.src = PEERJS_URL; s.async = true;
+    s.onload = () => fin(true); s.onerror = () => fin(false);
+    tm = setTimeout(() => fin(false), C.NET_LOAD_MS);
+    try { document.head.appendChild(s); } catch (e) { fin(false); }
+  });
+}
+async function loadNetLibs() {
+  try { buildLiteResources(); } catch (e) { return false; }
+  return loadPeerJS();
+}
+function peerOptions() {
+  // 本番: 何も上書きしない = PeerJS 1.5.4 の既定値 (wss://0.peerjs.com:443, iceServers = Google STUN + peerjs.com のTURN 2台)。
+  // ICE候補の中身 (mDNSで隠された .local 名かIPか) はアプリ側では一切見ない。
+  const o = { debug: 0 };
+  if (DEBUG && /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {   // テスト専用 (?debug かつ ローカルホストで配信時のみ): ローカルのPeerServerへ向ける
+    const q = new URLSearchParams(location.search);
+    if (q.get('peerhost')) { o.host = q.get('peerhost'); if (q.get('peerport')) o.port = +q.get('peerport'); o.path = q.get('peerpath') || '/'; o.secure = q.get('peersecure') === '1'; }
+    if (q.get('peerice') === 'none') o.config = { iceServers: [] };
+  }
+  return o;
+}
+
+/* ---- 参加 / 離脱 ---- */
+function netSetStatus(st) { net.status = st; }
+function netNotice(text, ms) { net.notice = text; net.noticeUntil = performance.now() + (ms || 8000); }
+
+async function netJoin(roomName, role) {
+  netLeave(true);
+  const gen = ++net.gen;
+  net.frameT = performance.now();
+  net.room = roomName; net.role = role; net.on = true; net.ready = false; net.slot = -1; net.hash = hashRoom(roomName); net.statusText = '';
+  netSetStatus('loading');
+  try {
+    const ok = await loadNetLibs();
+    if (gen !== net.gen) return;
+    if (!ok) { netFail(gen, 'ネットワーク機能を読み込めません。1人で飛行します', '通信ライブラリを読み込めません', true); return; }
+    netSetStatus('joining');
+    const r = await claimSlot(gen);
+    if (gen !== net.gen) { if (r && r.peer) { try { r.peer.destroy(); } catch (e) { /* ignore */ } } return; }
+    if (r.full) { netFail(gen, 'ルームが満員です', 'ルームが満員です'); return; }
+    if (!r.peer) { netFail(gen, 'ルームサーバーに接続できません。1人で飛行します', 'ルームサーバーに接続できません', true); return; }
+    netStartPeer(r.peer, r.slot, gen);
+  } catch (e) { if (gen === net.gen) netFail(gen, 'ネットワークエラー。1人で飛行します', 'ネットワークエラー'); }
+}
+/** 参加失敗/切断: ルームを抜けてソロ飛行へ (HUDに短い通知)。retry=true (サーバーに繋がらない/切れた) なら、XRセッション/観戦が続いている間だけ
+ *  NET_RETRY_MS 後に自動で再参加を試みる (最大 NET_RETRY_MAX 回)。公開シグナリングサーバーの一時的な不調で、その回のフライト全体がソロになるのを避ける。 */
+function netFail(gen, text, statusText, retry) {
+  if (gen !== net.gen) return;
+  const roomName = net.room, role = net.role;
+  netLeave(true);
+  netNotice(text, 9000);
+  net.status = 'failed'; net.statusText = statusText || text;
+  if (retry && net.retryN < C.NET_RETRY_MAX) {
+    net.retryN++;
+    net.retryTimer = setTimeout(() => {
+      net.retryTimer = 0;
+      if (!net.on && (role === 'spectator' ? spec.on : !!xrSession)) { const p = netJoin(roomName, role); if (p && p.catch) p.catch(() => {}); }
+    }, C.NET_RETRY_MS);
+  }
+}
+
+/** スロットを順に試す (ピルオットは0から昇順、観戦は23から降順)。unavailable-id なら次へ。 */
+async function claimSlot(gen) {
+  const n = C.NET_SLOTS;
+  for (let i = 0; i < n; i++) {
+    if (gen !== net.gen) return { peer: null };
+    const slot = net.role === 'spectator' ? n - 1 - i : i;
+    const r = await tryPeer(slot, gen);
+    if (r.peer) return { peer: r.peer, slot };
+    if (!r.taken) return { peer: null };
+  }
+  return { peer: null, full: true };
+}
+function tryPeer(slot, gen) {
+  return new Promise((resolve) => {
+    let p = null, settled = false, tm = 0;
+    const done = (v) => { if (settled) return; settled = true; clearTimeout(tm); resolve(v); };
+    try { p = new window.Peer(peerIdOf(slot), peerOptions()); } catch (e) { resolve({ err: 'ctor' }); return; }
+    tm = setTimeout(() => { if (settled) return; try { p.destroy(); } catch (e) { /* ignore */ } done({ err: 'timeout' }); }, C.NET_OPEN_MS);
+    p.on('open', () => done({ peer: p }));
+    p.on('error', (err) => {
+      if (!settled) { try { p.destroy(); } catch (e) { /* ignore */ } done(err && err.type === 'unavailable-id' ? { taken: true } : { err: err && err.type }); return; }
+      if (net.peer === p && gen === net.gen) { try { netOnPeerError(err); } catch (e) { /* ignore */ } }
+    });
+  });
+}
+
+function netStartPeer(peer, slot, gen) {
+  net.peer = peer; net.slot = slot; net.ready = true; net.sid = Math.random().toString(36).slice(2, 10); net.seq = 0; net.reconnectN = 0; net.retryN = 0;
+  netSetStatus('ready');
+  if (net.role === 'pilot') setDroneColor(drone, PALETTE[slot % PALETTE.length]);
+  peer.on('connection', (c) => { try { if (net.peer === peer) netOnIncoming(c); else c.close(); } catch (e) { /* ignore */ } });
+  peer.on('open', () => { if (net.peer === peer) { net.reconnectN = 0; if (net.status === 'reconnecting') netSetStatus('ready'); netRescan(); } });   // シグナリング再接続後: 切れていた間に見失った相手を探し直す
+  peer.on('disconnected', () => { if (net.peer === peer) { netSetStatus('reconnecting'); net.reconnectAt = performance.now() + 500; } });   // P2Pは生きたまま。シグナリングだけ再接続
+  peer.on('close', () => { if (net.peer === peer && gen === net.gen) netFail(gen, 'ルーム接続が切れました。1人で飛行します', 'ルーム接続が切れました', true); });
+  // ('error' は tryPeer で登録済みのハンドラが netOnPeerError へ渡す)
+  net.pingAt = net.gossipAt = 0; net.tickAt = performance.now();
+  net.tickTimer = setInterval(netTick, 250);
+  netRescan();
+}
+/** 全スロットへの接続を (1巡だけ) 試みる順番を作る。PeerJS の公開サーバーにはルーム内の一覧を得る手段が無いので、相手探しは「接続してみる」しかない。
+ *  ・確実に居るスロット (自分のスロット取得時に「使用中」だった番号 = パイロットなら自分より小さい / 観戦なら大きい) を先に。
+ *  ・残りは、パイロットなら 観戦側の端(23,22..) と 自分の次(slot+1..) を交互に / 観戦なら パイロット側の端(0,1..) と 自分の手前 を交互に。
+ *  ・居ないスロットへの接続はサーバーが約5秒後に EXPIRE を返すまで RTCPeerConnection を1本占有するので、同時に試すのは NET_PENDING_MAX 本まで (netTick)。
+ *  ・呼ぶのは 参加直後 / シグナリング再接続後 / 自分が停止していた後 (ヘッドセットを外していた等)。それ以外の取りこぼしはゴシップと net.lost の再試行が拾う。 */
+function netRescan() {
+  const slot = net.slot, n = C.NET_SLOTS, sp = net.role === 'spectator';
+  net.scanQ.length = 0; net.tried.clear();
+  if (sp) for (let i = slot + 1; i < n; i++) net.scanQ.push(i); else for (let i = slot - 1; i >= 0; i--) net.scanQ.push(i);
+  let lo = sp ? 0 : slot + 1, hi = sp ? slot - 1 : n - 1;
+  while (lo <= hi) {
+    if (sp) { net.scanQ.push(lo++); if (lo <= hi) net.scanQ.push(hi--); }
+    else { net.scanQ.push(hi--); if (lo <= hi) net.scanQ.push(lo++); }
+  }
+}
+
+function netLeave(sync) {
+  net.gen++;
+  if (net.tickTimer) { clearInterval(net.tickTimer); net.tickTimer = 0; }
+  if (net.retryTimer) { clearTimeout(net.retryTimer); net.retryTimer = 0; }
+  const peer = net.peer;
+  if (peer) {
+    const bye = JSON.stringify(['b']);
+    for (const ps of net.list) trySend(ps, bye);
+    const kill = () => { try { peer.destroy(); } catch (e) { /* ignore */ } };   // destroy = 全データ接続とシグナリングを閉じる → サーバー上のスロットも即座に空く
+    if (sync) kill(); else setTimeout(kill, 80);                                // 可能なら bye が出ていくのを少し待つ
+  }
+  for (const c of Array.from(net.pending.values())) { clearTimeout(c._tm); c._dup = true; }
+  for (const ps of net.list.slice()) disposePs(ps);
+  net.peers.clear(); net.list.length = 0; net.tried.clear(); net.scanQ.length = 0; net.pending.clear(); net.lost.clear();
+  net.peer = null; net.ready = false; net.slot = -1; net.on = false; net.status = 'idle'; net.unaligned = 0; net.nConn = net.nSpec = 0; net.txAcc = 0;
+  net.nNone = net.nOther = net.nWait = net.nDiff = 0; net.aud.length = 0; net.audN = 0; raud.chosen[0] = raud.chosen[1] = raud.chosen[2] = null;
+  calCancel(); cal.lockRecall = false;
+  if (drone && drone.userData.ring) setDroneColor(drone, null);
+  remoteAudioStop();
+}
+
+/* ---- 接続の管理 ---- */
+function newPs(slot) {
+  return {
+    slot, role: '', sid: '', conn: null, lastMsg: 0, closedAt: 0, rtt: -1, seq: -1, lastState: 0, hasState: false,
+    kind: 0, id: '', buf: new Float64Array(SNAP_N * SNAP_STRIDE), n: 0, w: 0, off: 0, hasOff: false,
+    mode: 0, st: 0, rpm: 0, h: 0, spd: 0, ex: false, popx: 0, popy: 0, popz: 0,
+    sp: new THREE.Vector3(), sq: new THREE.Quaternion(), sh: new THREE.Vector3(), shYaw: 0, srpm: 0,     // 補間結果 (共有座標)
+    drone: null, fade: 0, shown: false, dist: 1e9, monD: null, monU: null, user: null, specAl: true, row: null,
+    planes: null, plRev: -1, plN: 0, plGot: 0, plTmp: null, planesVer: 0, plKind: 0, plId: '', rowSig: '',
+    idRaw: '', calD: -1, ep: -1, rxWin: 0, rxN: 0, plDone: -1, plAskAt: 0, plReqAt: 0,                 // idRaw: 受信したままのid (比較用) / calD: 相手の手動2点間距離[cm] / ep: 相手の align.rev
+  };
+}
+function getPs(slot) {
+  let ps = net.peers.get(slot);
+  if (ps) return ps;
+  ps = newPs(slot); net.peers.set(slot, ps);
+  let i = net.list.length; while (i > 0 && net.list[i - 1].slot > slot) i--;                // slot順を保つ
+  net.list.splice(i, 0, ps);
+  return ps;
+}
+function disposePs(ps) {
+  if (ps.drone) { disposeLiteDrone(ps.drone); ps.drone = null; }
+  if (ps.monD) { ps.monD.removeFromParent(); ps.monD.material.dispose(); ps.monD = null; }
+  if (ps.monU) { disposeUserMarker(ps.monU); ps.monU = null; }
+  if (ps.user) { disposeUserMarker(ps.user); ps.user = null; }
+  if (ps.row) { ps.row.remove(); ps.row = null; }
+  const c = ps.conn; ps.conn = null;
+  if (c) { c._dup = true; try { c.close(); } catch (e) { /* ignore */ } }
+  if (spec.follow === ps.slot) spec.follow = -1;
+}
+/** 相手を一覧から外す。lost=true (無通信/切断で外れた) なら、しばらく再接続を試み続ける (netTick)。bye で去った相手は lost=false。 */
+function removePeer(ps, lost) {
+  const i = net.list.indexOf(ps);
+  if (i >= 0) net.list.splice(i, 1);
+  net.peers.delete(ps.slot); net.tried.delete(ps.slot);
+  if (lost) net.lost.set(ps.slot, performance.now() + C.NET_LOST_RETRY_MS); else net.lost.delete(ps.slot);
+  disposePs(ps);
+}
+
+function trySend(ps, str) {
+  const c = ps.conn;
+  if (!c || !c.open) return false;
+  try {
+    const dc = c.dataChannel;
+    if (dc && dc.bufferedAmount > C.NET_META_BACKLOG) return false;   // 完全に詰まっている相手へは積まない (無通信が続けば NET_DROP_MS で切り離す)
+    c.send(str); return true;
+  } catch (e) { return false; }
+}
+function netConnectTo(slot, fast) {
+  const p = net.peer;
+  if (!p || p.destroyed || p.disconnected || slot === net.slot || slot < 0 || slot >= C.NET_SLOTS) return;
+  const ps0 = net.peers.get(slot);
+  if ((ps0 && ps0.conn) || net.pending.has(slot)) return;
+  const now = performance.now(), tr = net.tried.get(slot);
+  if (tr && now - tr.t < tr.back) return;
+  net.tried.set(slot, { t: now, back: tr ? Math.min(tr.back * 2, fast ? 6000 : 30000) : 4000 });   // 再試行の間隔: 4→8→16→30秒。fast (直前まで繋がっていた相手) は最初の1分だけ 4→6秒で粘る
+  try {
+    const c = p.connect(peerIdOf(slot), { reliable: false, serialization: 'raw', label: 'mr1' });   // reliable:false = 順不同・再送あり (冒頭のコメント参照)
+    if (c) { regConn(c, slot, 'out'); net.pending.set(slot, c); }
+  } catch (e) { /* ignore */ }
+}
+function netOnIncoming(c) {
+  const slot = slotOfPeerId(c.peer);
+  if (slot < 0 || slot === net.slot || c.label !== 'mr1') { try { c.close(); } catch (e) { /* ignore */ } return; }
+  regConn(c, slot, 'in');
+}
+function regConn(c, slot, dir) {
+  c._slot = slot; c._dir = dir; c._dup = false;
+  c._tm = setTimeout(() => { if (!c.open) dropPending(c); }, C.NET_OPEN_MS);
+  c.on('open', () => { try { netConnOpen(c); } catch (e) { /* ignore */ } });
+  c.on('data', (d) => netOnData(c, d));
+  c.on('close', () => { try { netConnClose(c); } catch (e) { /* ignore */ } });
+  c.on('error', () => { /* peer-unavailable 等は静かに無視 (タイムアウト/closeで片付く) */ });
+}
+/** 開かなかった接続を片付ける。PeerJS は「まだ開いていない接続」を close() しても 'close' イベントを出さないので、保留表からはここで外す。 */
+function dropPending(c) {
+  clearTimeout(c._tm); if (net.pending.get(c._slot) === c) net.pending.delete(c._slot);
+  c._dup = true; try { c.close(); } catch (e) { /* ignore */ }
+}
+const initiatorOf = (c) => (c._dir === 'out' ? net.slot : c._slot);   // その接続を張った側のスロット
+function netConnOpen(c) {
+  clearTimeout(c._tm); if (net.pending.get(c._slot) === c) net.pending.delete(c._slot);
+  if (net.peer == null || c._dup) { c._dup = true; try { c.close(); } catch (e) { /* ignore */ } return; }
+  const ps = getPs(c._slot), old = ps.conn, now = performance.now();
+  if (old && old !== c) {
+    // 同じ相手との接続が2本になった。
+    //  ・両方生きている (同時に張り合った): 張った側のスロットが小さい方を残す。両端が同じ規則で選ぶので必ず同じ1本が残る。
+    //  ・古い方が沈黙している (相手が再起動して張り直してきた等): 新しい方を採用する。古い方が ICE のタイムアウトで閉じるのを待たない。
+    const oldAlive = old.open && now - ps.lastMsg < C.NET_LOST_MS;
+    if (!oldAlive || initiatorOf(c) < initiatorOf(old)) { old._dup = true; ps.conn = c; try { old.close(); } catch (e) { /* ignore */ } }
+    else { c._dup = true; try { c.close(); } catch (e) { /* ignore */ } return; }
+  } else ps.conn = c;
+  ps.lastMsg = now; ps.closedAt = 0; net.lost.delete(c._slot);
+  sendHello(ps);
+}
+function netConnClose(c) {
+  clearTimeout(c._tm); if (net.pending.get(c._slot) === c) net.pending.delete(c._slot);
+  if (c._dup) return;
+  const ps = net.peers.get(c._slot);
+  if (ps && ps.conn === c) { ps.conn = null; ps.closedAt = performance.now(); }
+}
+function netOnPeerError(err) {
+  const t = err && err.type;
+  if (t === 'peer-unavailable') {                              // 居ないスロットへの接続: 静かに片付ける
+    const m = /-(\d{1,2})$/.exec(String(err.message || '').trim());
+    const c = m ? net.pending.get(+m[1]) : null;
+    if (c && !c.open) dropPending(c);                          // 保留中の接続を即解放 (RTCPeerConnectionを残さない)
+    return;
+  }
+  if (t === 'network' || t === 'server-error' || t === 'socket-error' || t === 'socket-closed') {
+    if (net.peer && net.peer.disconnected && net.status === 'ready') { netSetStatus('reconnecting'); net.reconnectAt = performance.now() + 500; }
+  }
+}
+
+/* ---- メッセージ ---- (全て文字列化したJSON配列。先頭要素=種別: h=hello g=gossip s=状態 p=平面 q=平面の再送要求 k=ping r=pong b=bye) */
+const isInt = (v, lo, hi) => typeof v === 'number' && Number.isInteger(v) && v >= lo && v <= hi;
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const connectedSlots = () => { const a = []; for (let i = 0; i < net.list.length; i++) { const ps = net.list[i]; if (ps.conn && ps.conn.open) a.push(ps.slot); } return a; };
+
+function sendHello(ps) {
+  trySend(ps, JSON.stringify(['h', net.sid, net.slot, net.role === 'spectator' ? 's' : 'p', align.kind, align.id, connectedSlots()]));
+  if (net.role === 'pilot' && ps.role === 'spectator') netSendPlanes(ps);
+}
+function netLearnSlots(arr) {
+  if (!Array.isArray(arr)) return;
+  const n = Math.min(arr.length, C.NET_SLOTS);
+  for (let i = 0; i < n; i++) {
+    const v = arr[i];
+    if (!isInt(v, 0, C.NET_SLOTS - 1) || v === net.slot) continue;
+    const ps = net.peers.get(v);
+    if (!ps || !ps.conn) netConnectTo(v);
+  }
+}
+function flushSnaps(ps) { ps.n = 0; ps.w = 0; ps.ex = false; ps.popx = ps.popy = ps.popz = 0; }   // 補間バッファを捨てる: 次の1個目の状態へ直接切り替わる (座標系や時計が不連続に変わった時)
+function resetStream(ps) { flushSnaps(ps); ps.seq = -1; ps.hasOff = false; ps.hasState = false; }
+/** 相手の位置合わせ記述子を更新。変わったら true。 */
+function setPeerAlign(ps, kind, id) {
+  if (ps.kind === kind && ps.id === id) return false;
+  ps.kind = kind; ps.id = id;
+  const m = kind === NET_KIND_MANUAL ? /^m(\d{1,5})$/.exec(id) : null; ps.calD = m ? +m[1] : -1;
+  return true;
+}
+
+function netOnData(c, data) {
+  const ps = net.peers.get(c._slot);                           // 送り主は「その接続の相手のピアID」から決まる。本文中の自己申告スロットでは決めない
+  if (!ps || c._dup || !net.peer) return;
+  net.rxCount++;
+  try {
+    const now = performance.now();
+    if (now - ps.rxWin > 1000) { ps.rxWin = now; ps.rxN = 0; }
+    if (++ps.rxN > C.NET_RX_MAX_PER_S) { net.rxBad++; return; }                  // 洪水対策: 1相手あたりの処理数に上限 (正常時は毎秒30個前後)
+    if (typeof data !== 'string' || data.length > C.NET_MAX_MSG) { net.rxBad++; return; }
+    const m = JSON.parse(data);
+    if (!Array.isArray(m) || m.length < 1 || m.length > 24 || typeof m[0] !== 'string') { net.rxBad++; return; }
+    ps.lastMsg = now;
+    let ok = true;
+    switch (m[0]) {
+      case 's': ok = rxState(ps, m); break;
+      case 'h': ok = rxHello(ps, m); break;
+      case 'g': ok = rxGossip(ps, m); break;
+      case 'p': ok = rxPlanes(ps, m); break;
+      case 'k': if (isNum(m[1])) trySend(ps, JSON.stringify(['r', m[1]])); else ok = false; break;
+      case 'r': if (isNum(m[1])) { const rtt = ps.lastMsg - m[1]; if (rtt >= 0 && rtt < 10000) ps.rtt = ps.rtt < 0 ? rtt : ps.rtt * 0.8 + rtt * 0.2; } else ok = false; break;
+      case 'b': if (m.length === 1) removePeer(ps, false); else ok = false; break;
+      case 'q': if (net.role === 'pilot' && ps.role === 'spectator' && now - ps.plReqAt > 1500) { ps.plReqAt = now; netSendPlanes(ps); } break;   // 観戦者からの平面の再送要求
+      default: ok = false;
+    }
+    if (!ok) net.rxBad++;
+  } catch (e) { net.rxBad++; }
+}
+function rxHello(ps, m) {
+  if (m.length < 7 || typeof m[1] !== 'string' || m[1].length > 24 || m[2] !== ps.slot || (m[3] !== 'p' && m[3] !== 's') || !isInt(m[4], 0, 2) || typeof m[5] !== 'string' || m[5].length > 64 || !Array.isArray(m[6])) return false;
+  const sid = cleanId(m[1]);
+  if (ps.sid && ps.sid !== sid) { resetStream(ps); ps.plRev = -1; ps.plDone = -1; ps.plTmp = null; }   // 同じスロットに別のセッションが入った: 通し番号・平面の版は引き継がない
+  ps.sid = sid; ps.role = m[3] === 's' ? 'spectator' : 'pilot';
+  if (setPeerAlign(ps, m[4], cleanId(m[5]))) { ps.idRaw = m[5]; flushSnaps(ps); }
+  netLearnSlots(m[6]);
+  if (net.role === 'pilot' && ps.role === 'spectator') netSendPlanes(ps);
+  return true;
+}
+function rxGossip(ps, m) {
+  if (m.length < 4 || !Array.isArray(m[1]) || !isInt(m[2], 0, 2) || typeof m[3] !== 'string' || m[3].length > 64) return false;
+  if (ps.role !== 'pilot' || !ps.hasState) { if (setPeerAlign(ps, m[2], cleanId(m[3]))) ps.idRaw = m[3]; }   // 状態を送っているパイロットの位置合わせは状態メッセージ側が正 (順不同で届く古いゴシップで戻さない)
+  netLearnSlots(m[1]);
+  // 平面の取りこぼしの自己修復: 観戦者は、パイロットが告げる版をまだ受け取り終えていなければ再送を要求する (3秒に1回まで)
+  if (net.role === 'spectator' && m.length >= 5 && isInt(m[4], 0, 2147483647) && ps.plDone !== m[4] && ps.lastMsg - ps.plAskAt > 3000) { ps.plAskAt = ps.lastMsg; trySend(ps, '["q"]'); }
+  return true;
+}
+function rxState(ps, m) {
+  if ((m.length !== 21 && m.length !== 22) || ps.role === 'spectator') return false;
+  for (let i = 1; i <= 20; i++) if (i !== 18 && !isNum(m[i])) return false;
+  if (typeof m[18] !== 'string' || m[18].length > 64 || !isInt(m[1], 0, 2147483647) || !isInt(m[11], 0, 3) || !isInt(m[12], 0, 1) || !isInt(m[17], 0, 2)) return false;
+  if (m.length === 22 && !isInt(m[21], 0, 2147483647)) return false;
+  if (!(m[2] >= 0 && m[2] < 1e13)) return false;                              // 送信側時計 [ms]: 常識的な範囲だけ (巨大値でオフセット計算が発散しないように)
+  const ql = Math.hypot(m[6], m[7], m[8], m[9]);
+  if (!(ql > 0.5 && ql < 1.5)) return false;
+  const seq = m[1];
+  if (ps.seq >= 0 && seq <= ps.seq && ps.seq - seq < 200) return true;       // 古い/重複 (正常: 無視)
+  if (ps.seq >= 0 && seq < ps.seq - 200) resetStream(ps);                    // 相手が作り直した (番号が大きく戻った)
+  ps.seq = seq; ps.role = 'pilot';
+  // 座標系の不連続 (相手の align.rev / 方式 / UUID が変わった): 旧座標系の記録と補間しない
+  const ep = m.length === 22 ? m[21] : 0;
+  let flush = ps.ep !== ep; ps.ep = ep;
+  if (m[17] !== ps.kind || m[18] !== ps.idRaw) { ps.idRaw = m[18]; if (setPeerAlign(ps, m[17], cleanId(m[18]))) flush = true; }
+  const now = ps.lastMsg, d = now - m[2];
+  if (!ps.hasOff) { ps.off = d; ps.hasOff = true; }
+  else if (d - ps.off > C.NET_LOST_MS || d - ps.off < -1000) { ps.off = d; flush = true; }   // 時計が飛んだ (相手/自分の端末がスリープしていた等): ゆっくり追従せず即合わせ直す
+  else ps.off += (d - ps.off) * (d < ps.off ? 0.25 : 0.01);
+  if (flush) flushSnaps(ps);   // 時計オフセット: 速いパケットへは素早く(でも1発の外れ値では飛ばない)、遅い側へはゆっくり追従 = 概ね最速パケット基準でジッタを吸収
+  const b = ps.buf, S = SNAP_STRIDE, o = ps.w * S, P = C.NET_MAX_POS;
+  let t = m[2] + ps.off;
+  if (ps.n > 0) { const pt = b[((ps.w - 1 + SNAP_N) % SNAP_N) * S]; if (t <= pt) t = pt + 1; }
+  b[o] = t;
+  b[o + 1] = clamp(m[3], -P, P); b[o + 2] = clamp(m[4], -P, P); b[o + 3] = clamp(m[5], -P, P);
+  b[o + 4] = m[6] / ql; b[o + 5] = m[7] / ql; b[o + 6] = m[8] / ql; b[o + 7] = m[9] / ql;
+  b[o + 8] = clamp(m[13], -P, P); b[o + 9] = clamp(m[14], -P, P); b[o + 10] = clamp(m[15], -P, P); b[o + 11] = clamp(m[16], -10, 10);
+  b[o + 12] = clamp(m[10], 0, 30000);
+  ps.w = (ps.w + 1) % SNAP_N; if (ps.n < SNAP_N) ps.n++;
+  ps.rpm = b[o + 12]; ps.st = m[11]; ps.mode = m[12]; ps.h = clamp(m[19], -1000, 100000); ps.spd = clamp(m[20], 0, 10000);
+  ps.lastState = now; ps.hasState = true;
+  return true;
+}
+
+/* ---- 状態の送信 (20Hz) ---- */
+const txBuf = new Array(22); txBuf[0] = 's';
+const _tp = new THREE.Vector3(), _tq = new THREE.Quaternion(), _th = new THREE.Vector3();
+const r3 = (v) => Math.round(v * 1000) / 1000;
+function netTxState(nowMs, avgRpm) {
+  if (net.role !== 'pilot' || !net.ready || net.txPause || !placed) return;
+  if (dbg.preTx) dbg.preTx(nowMs);
+  xfPoint(sFL, _tp, drone.position.x, drone.position.y, drone.position.z);
+  xfQuat(sFL, _tq, drone.quaternion);
+  const hv = head.valid ? head.pos : drone.position, hf = head.valid ? head.fwdH : tmpV.set(0, 0, -1);
+  xfPoint(sFL, _th, hv.x, hv.y, hv.z);
+  const a = txBuf;
+  a[1] = ++net.seq; a[2] = Math.round(nowMs);
+  a[3] = r3(_tp.x); a[4] = r3(_tp.y); a[5] = r3(_tp.z);
+  a[6] = r3(_tq.x); a[7] = r3(_tq.y); a[8] = r3(_tq.z); a[9] = r3(_tq.w);
+  a[10] = Math.round(avgRpm); a[11] = sim.state; a[12] = sim.mode;
+  a[13] = r3(_th.x); a[14] = r3(_th.y); a[15] = r3(_th.z); a[16] = r3(angleDiff(Math.atan2(-hf.x, -hf.z) + sFL.yaw, 0));
+  a[17] = align.kind; a[18] = align.id; a[19] = Math.round((pos.y - sim.groundY) * 100); a[20] = Math.round(vel.length() * 10); a[21] = align.rev;
+  const str = JSON.stringify(a), L = net.list;
+  net.txCount++;
+  for (let i = 0; i < L.length; i++) {
+    const c = L[i].conn;
+    if (!c || !c.open) continue;
+    const dc = c.dataChannel;
+    if (dc && dc.bufferedAmount > C.NET_TX_BACKLOG) continue;    // 詰まっている相手へは古い状態を溜めない (1個≈170byte → 溜まるのは最大でも十数個 ≈ 0.5秒分)
+    try { c.send(str); } catch (e) { /* ignore */ }
+  }
+}
+
+/* ---- 平面の共有 (パイロット→観戦者) ---- */
+const _sm = new THREE.Matrix4();
+function netSendPlanes(target) {
+  if (align.kind === NET_KIND_NONE || net.role !== 'pilot') return;
+  const L = [];
+  for (let i = 0; i < planes.length && L.length < C.NET_MAX_PLANES; i++) { const pl = planes[i]; if (pl.valid && pl.poly && pl.poly.length >= 6) L.push(pl); }
+  if (!L.length) return;
+  _sm.makeRotationY(sFL.yaw).setPosition(sFL.tx, sFL.ty, sFL.tz);
+  const rev = net.planesRev, msgs = [], n = L.length;   // rev = 内容の版 (netPlanesTick が内容の変化ごとに+1)。同じ内容の再送は同じ版番号
+  for (let i = 0; i < n; i++) {
+    const pl = L[i];
+    tmpM.multiplyMatrices(_sm, pl.m);
+    const e = tmpM.elements, mat = new Array(16);
+    for (let k = 0; k < 16; k++) mat[k] = Math.round(e[k] * 10000) / 10000;
+    const np = pl.poly.length >> 1, step = Math.ceil(np / C.NET_MAX_POLY), poly = [];
+    for (let k = 0; k < np; k += step) poly.push(Math.round(pl.poly[k * 2] * 1000) / 1000, Math.round(pl.poly[k * 2 + 1] * 1000) / 1000);
+    msgs.push(JSON.stringify(['p', rev, i, n, align.kind, align.id, mat, pl.horiz ? 1 : 0, (pl.label || '').slice(0, 16), poly]));
+  }
+  const targets = target ? [target] : net.list;
+  for (let t = 0; t < targets.length; t++) {
+    const ps = targets[t];
+    if (ps.role !== 'spectator') continue;
+    for (let i = 0; i < msgs.length; i++) trySend(ps, msgs[i]);
+  }
+}
+function rxPlanes(ps, m) {
+  if (net.role !== 'spectator') return true;                   // パイロットは他機の平面を使わない
+  if (m.length !== 10 || ps.role !== 'pilot') return false;
+  const rev = m[1], i = m[2], n = m[3];
+  if (!isInt(rev, 0, 2147483647) || !isInt(n, 1, C.NET_MAX_PLANES) || !isInt(i, 0, n - 1) || !isInt(m[4], 0, 2) || typeof m[5] !== 'string' || m[5].length > 64) return false;
+  const mat = m[6], poly = m[9];
+  if (!Array.isArray(mat) || mat.length !== 16 || !Array.isArray(poly) || poly.length < 6 || poly.length > C.NET_MAX_POLY * 2 || (poly.length & 1)) return false;
+  if (typeof m[8] !== 'string' || m[8].length > 16 || !isInt(m[7], 0, 1)) return false;
+  for (let k = 0; k < 16; k++) { const v = mat[k]; if (!isNum(v)) return false; if (k < 12 && Math.abs(v) > 1.01) return false; }
+  const fp = new Float32Array(poly.length);
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9;
+  for (let k = 0; k < poly.length; k++) {
+    const v = poly[k]; if (!isNum(v) || Math.abs(v) > C.NET_MAX_POS) return false;
+    fp[k] = v;
+    if (k & 1) { if (v < z0) z0 = v; if (v > z1) z1 = v; } else { if (v < x0) x0 = v; if (v > x1) x1 = v; }
+  }
+  if (ps.plRev !== rev || !ps.plTmp) {
+    if (ps.plRev === rev) return true;                                           // その版は受信完了済み
+    if (rev < ps.plRev && ps.plRev - rev < 1000000) return true;                 // 古い版が遅れて届いた (順不同配送): 無視
+    ps.plRev = rev; ps.plN = n; ps.plGot = 0; ps.plTmp = new Array(n).fill(null);
+  }
+  if (n !== ps.plN) return false;
+  const M = new THREE.Matrix4().fromArray(mat);
+  M.elements[12] = clamp(M.elements[12], -C.NET_MAX_POS, C.NET_MAX_POS); M.elements[13] = clamp(M.elements[13], -C.NET_MAX_POS, C.NET_MAX_POS); M.elements[14] = clamp(M.elements[14], -C.NET_MAX_POS, C.NET_MAX_POS);
+  const nrm = new THREE.Vector3().setFromMatrixColumn(M, 1).normalize();
+  if (!ps.plTmp[i]) ps.plGot++;
+  ps.plTmp[i] = { valid: true, m: M, poly: fp, minX: x0, maxX: x1, minZ: z0, maxZ: z1, horiz: Math.abs(nrm.y) > 0.9, y: M.elements[13], label: m[8] };
+  if (ps.plGot === n) { ps.planes = ps.plTmp; ps.plTmp = null; ps.planesVer++; ps.plDone = rev; ps.plKind = m[4]; ps.plId = cleanId(m[5]); }
+  return true;
+}
+function netPlanesTick(now) {
+  if (net.role !== 'pilot' || align.kind === NET_KIND_NONE || now - net.planesTxAt < C.NET_PLANES_MIN_MS) return;
+  const sig = planesRev + '|' + align.kind + '|' + align.id + '|' + Math.round(sFL.yaw * 100) + '|' + Math.round(sFL.tx * 20) + '|' + Math.round(sFL.ty * 20) + '|' + Math.round(sFL.tz * 20);
+  if (sig === net.planesTxSig) return;
+  net.planesTxSig = sig; net.planesRev = (net.planesRev + 1) % 2000000000;
+  if (!planes.length) return;
+  net.planesTxAt = now; netSendPlanes(null);
+}
+
+/* ---- 定期処理 (4Hz, setInterval: PCの裏タブでも動く。裏タブでは1Hz程度に間引かれるが ping は1Hzなので足りる) ---- */
+function netTick() { try { netTickBody(); } catch (e) { /* 次の周期でやり直す */ } }
+function netTickBody() {
+  const peer = net.peer;
+  if (!peer) return;
+  const now = performance.now(), gap = now - net.tickAt;
+  net.tickAt = now;
+  if (gap > C.NET_STALL_MS) {
+    // 自分が止まっていた (ヘッドセットを外していた / タブが凍結されていた)。自分の止まった時計で相手を「無通信」と判定しない:
+    // 全員に数秒の猶予を与え (生きていれば ping/状態が届く)、切れてしまった相手は探し直す。
+    const t = now - C.NET_DROP_MS + 4000;
+    for (let i = 0; i < net.list.length; i++) { const ps = net.list[i]; if (ps.lastMsg < t) ps.lastMsg = t; if (ps.closedAt) ps.closedAt = now; }
+    if (gap > 30000 && !peer.disconnected) netRescan();          // 長く止まっていた時だけ全スロットを探し直す (短い停止は上の猶予と net.lost で足りる)
+  }
+  for (let k = 0; k < 3 && net.scanQ.length && net.pending.size < C.NET_PENDING_MAX; k++) netConnectTo(net.scanQ.shift());
+  for (let i = net.list.length - 1; i >= 0; i--) {
+    const ps = net.list[i];
+    if (now - ps.lastMsg > C.NET_DROP_MS || (!ps.conn && ps.closedAt && now - ps.closedAt > 1500)) removePeer(ps, true);
+  }
+  if (net.lost.size) {                                         // 切れた相手への再接続 (最初の1分は約5秒ごと、その後は30秒ごと、5分で諦める)。ゴシップに頼れない2台だけの時もこれで復旧する
+    for (const [slot, until] of net.lost) { if (now > until) net.lost.delete(slot); else if (net.pending.size < C.NET_PENDING_MAX) netConnectTo(slot, until - now > C.NET_LOST_RETRY_MS - 60000); }
+  }
+  if (now - net.pingAt >= 1000) { net.pingAt = now; const s = JSON.stringify(['k', Math.round(now)]); for (let i = 0; i < net.list.length; i++) trySend(net.list[i], s); }
+  // ゴシップ: 接続中スロット・自分の位置合わせ・自分の平面データの版 (観戦者が取りこぼしに気づいて再要求できるように)
+  if (now - net.gossipAt >= 2000) { net.gossipAt = now; const s = JSON.stringify(['g', connectedSlots(), align.kind, align.id, net.role === 'pilot' && align.kind !== NET_KIND_NONE && planes.length ? net.planesRev : -1]); for (let i = 0; i < net.list.length; i++) trySend(net.list[i], s); }
+  if (peer.disconnected && !peer.destroyed && now >= net.reconnectAt) {     // シグナリングだけ切れた: 指数バックオフ (2,4,8,15,15…秒) で再接続 (確立済みP2Pは影響なし)
+    net.reconnectN++; net.reconnectAt = now + Math.min(1000 * Math.pow(2, net.reconnectN), 15000);
+    try { peer.reconnect(); } catch (e) { /* ignore */ }
+  }
+  netPlanesTick(now);
+  if (net.notice && now > net.noticeUntil) net.notice = '';
+}
+function netHudSig() {
+  const now = performance.now();
+  if (net.notice && now >= net.noticeUntil) net.notice = '';
+  return net.on + '|' + net.status + '|' + net.slot + '|' + net.nConn + '|' + net.nSpec + '|' + align.kind + '|' + align.id + '|' + net.nNone + '|' + net.nOther + '|' + net.nWait + '|' + net.nDiff + '|' + net.unaligned + '|'
+    + (cal.active ? cal.step + 1 : 0) + '|' + (cal.msg && now < cal.msgUntil ? cal.msg : '') + '|' + net.notice + '|' + net.room;
+}
+
+/* ---- 他機の補間表示 ---- */
+/** rt (受信側時計) における他機の状態を ps.sp/sq/sh/shYaw/srpm (共有座標) へ。範囲内=線形補間(位置)/球面補間(姿勢)、未来側=速度外挿(上限 NET_EXTRAP_MS)後は静止。確保なし。 */
+const _qa = new THREE.Quaternion();
+function sampleRemote(ps, rt, dt) {
+  const b = ps.buf, S = SNAP_STRIDE, N = SNAP_N;
+  const i1 = (ps.w - 1 + N) % N, o1 = i1 * S;
+  if (ps.n === 0) return;
+  let px, py, pz, ex = false;
+  if (rt >= b[o1] || ps.n === 1) {                           // 最新より先: 外挿
+    let vx = 0, vy = 0, vz = 0, e = Math.min(Math.max(rt - b[o1], 0), C.NET_EXTRAP_MS) / 1000;
+    if (ps.n >= 2) {
+      const o0 = ((i1 - 1 + N) % N) * S, d = (b[o1] - b[o0]) / 1000;
+      if (d > 0.005 && d < 0.5) {
+        vx = (b[o1 + 1] - b[o0 + 1]) / d; vy = (b[o1 + 2] - b[o0 + 2]) / d; vz = (b[o1 + 3] - b[o0 + 3]) / d;
+        const sp = Math.hypot(vx, vy, vz); if (sp > 8) { const k = 8 / sp; vx *= k; vy *= k; vz *= k; }
+      }
+    }
+    px = b[o1 + 1] + vx * e; py = b[o1 + 2] + vy * e; pz = b[o1 + 3] + vz * e; ex = true;
+    ps.sq.set(b[o1 + 4], b[o1 + 5], b[o1 + 6], b[o1 + 7]);
+    ps.sh.set(b[o1 + 8], b[o1 + 9], b[o1 + 10]); ps.shYaw = b[o1 + 11]; ps.srpm = b[o1 + 12];
+    finishSample(ps, px, py, pz, ex, dt);
+    return;
+  }
+  let ia = i1, k = 1;                                         // rt を挟む (ib <= rt < ia) を後ろへ探す
+  for (;;) {
+    const ib = (ia - 1 + N) % N;
+    if (k >= ps.n) {                                          // それより古い記録なし: 最古を使う
+      const o = ia * S;
+      ps.sq.set(b[o + 4], b[o + 5], b[o + 6], b[o + 7]);
+      ps.sh.set(b[o + 8], b[o + 9], b[o + 10]); ps.shYaw = b[o + 11]; ps.srpm = b[o + 12];
+      finishSample(ps, b[o + 1], b[o + 2], b[o + 3], false, dt);
+      return;
+    }
+    if (b[ib * S] <= rt) {
+      const oa = ia * S, ob = ib * S, u = (rt - b[ob]) / Math.max(b[oa] - b[ob], 1);
+      ps.sq.set(b[ob + 4], b[ob + 5], b[ob + 6], b[ob + 7]).slerp(_qa.set(b[oa + 4], b[oa + 5], b[oa + 6], b[oa + 7]), u);
+      ps.sh.set(b[ob + 8] + (b[oa + 8] - b[ob + 8]) * u, b[ob + 9] + (b[oa + 9] - b[ob + 9]) * u, b[ob + 10] + (b[oa + 10] - b[ob + 10]) * u);
+      ps.shYaw = b[ob + 11] + angleDiff(b[oa + 11], b[ob + 11]) * u; ps.srpm = b[ob + 12] + (b[oa + 12] - b[ob + 12]) * u;
+      finishSample(ps, b[ob + 1] + (b[oa + 1] - b[ob + 1]) * u, b[ob + 2] + (b[oa + 2] - b[ob + 2]) * u, b[ob + 3] + (b[oa + 3] - b[ob + 3]) * u, false, dt);
+      return;
+    }
+    ia = ib; k++;
+  }
+}
+
+/** 位置の確定。外挿(静止)から補間へ戻った瞬間の飛びは、減衰するオフセット(時定数0.12s)に移して目立たなくする。通常の補間中は素通し(遅れを足さない)。 */
+function finishSample(ps, x, y, z, ex, dt) {
+  if (ps.ex && !ex) {
+    ps.popx = ps.sp.x - x; ps.popy = ps.sp.y - y; ps.popz = ps.sp.z - z;
+    const l = Math.hypot(ps.popx, ps.popy, ps.popz); if (l > 1) { const k = 1 / l; ps.popx *= k; ps.popy *= k; ps.popz *= k; }
+  }
+  ps.ex = ex;
+  const k = Math.exp(-(dt || 0.016) / 0.12); ps.popx *= k; ps.popy *= k; ps.popz *= k;
+  ps.sp.set(x + ps.popx, y + ps.popy, z + ps.popz);
+}
+
+/** ユーザー(頭)マーカー: 頭=球+バイザー、胴=床までの円柱。モニター(layer 3)と観戦ビュー(layer 0)の他者表示に使う (自分用 userMark と同じ見た目)。 */
+const UM = { body: null, head: null, visor: null };
+function makeUserMarker(color, layer, parent, slim) {
+  if (!UM.body) {
+    UM.body = new THREE.CylinderGeometry(0.17, 0.07, 1, 14, 1).translate(0, 0.5, 0);
+    UM.head = new THREE.SphereGeometry(0.11, 18, 12); UM.visor = new THREE.BoxGeometry(0.15, 0.05, 0.08);
+  }
+  const mk = (c) => new THREE.MeshBasicMaterial({ color: c, toneMapped: false, transparent: true });
+  const mBody = mk(color), mHead = mk(new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.5)), mVisor = mk(0xffffff);
+  const g = new THREE.Group(), head = new THREE.Group(), body = new THREE.Mesh(UM.body, mBody);
+  head.add(new THREE.Mesh(UM.head, mHead));
+  const visor = new THREE.Mesh(UM.visor, mVisor); visor.position.set(0, 0.01, -0.12); head.add(visor);
+  if (slim) { body.scale.x = body.scale.z = 0.5; body.renderOrder = -1; }   // 観戦ビュー: 胴を細くしてドローンを隠しにくくする
+  g.add(head, body); parent.add(g); setLayer(g, layer);
+  return { g, head, body, mats: [mBody, mHead, mVisor] };
+}
+function updateUserMarker(um, hp, yaw, floorY, alpha) {
+  um.g.visible = true; um.head.position.copy(hp); um.head.rotation.y = yaw;
+  um.body.position.set(hp.x, floorY, hp.z); um.body.scale.y = Math.max(0.1, hp.y - 0.12 - floorY);
+  for (let i = 0; i < 3; i++) um.mats[i].opacity = alpha;
+}
+function disposeUserMarker(um) { um.g.removeFromParent(); for (const m of um.mats) m.dispose(); }
+let monDroneGeo = null;
+
+const _rp = new THREE.Vector3(), _rq = new THREE.Quaternion(), _rh = new THREE.Vector3();
+function netUpdateRemotes(nowMs, dt) {
+  const spectator = net.role === 'spectator', L = net.list, rt = nowMs - C.NET_INTERP_MS, stp = dt / C.NET_FADE_S;
+  const myCm = align.kind === NET_KIND_MANUAL ? Math.round(cal.manual.d * 100) : -1;
+  let unal = 0, nConn = 0, nSpec = 0, nNone = 0, nOther = 0, nWait = 0, nDiff = 0;
+  net.audN = 0;
+  for (let i = 0; i < L.length; i++) {
+    const ps = L[i], open = ps.conn && ps.conn.open && nowMs - ps.lastMsg < C.NET_LOST_MS;   // 「接続」= 開いていて、かつ最近何か届いている
+    if (ps.role === 'spectator') { if (open) nSpec++; continue; }
+    if (open) nConn++;
+    if (!ps.hasState) continue;
+    const live = nowMs - ps.lastState < C.NET_LOST_MS;
+    ps.fade = clamp(ps.fade + (live ? stp : -stp), 0, 1);
+    const aligned = spectator ? true : isAlignedWith(ps.kind, ps.id);
+    if (!spectator && live) {
+      if (!aligned) {
+        unal++;
+        if (ps.kind === NET_KIND_NONE) nNone++;                                  // 相手がまだ位置合わせしていない
+        else if (align.kind === NET_KIND_NONE) { /* 自分がまだ: HUDの案内は「Yボタンで位置合わせ」 */ }
+        else if (ps.kind !== align.kind) nOther++;                               // 方式が違う (自動 と 手動)
+        else nWait++;                                                            // 両方自動だが共有スペースのUUIDが違う (確立待ち/別の部屋)
+      } else if (myCm >= 0 && ps.calD >= 0 && Math.abs(ps.calD - myCm) > 15) nDiff++;   // 手動同士だが2点間の距離が15cm以上違う = 別の点に触れた疑い
+    }
+    ps.shown = aligned && ps.fade > 0;
+    if (!ps.shown) {                                          // 隠す (位置合わせ待ち / フェード完了)
+      if (ps.drone) ps.drone.visible = false;
+      if (ps.monD) ps.monD.visible = false;
+      if (ps.monU) ps.monU.g.visible = false;
+      if (ps.user) ps.user.g.visible = false;
+      continue;
+    }
+    sampleRemote(ps, rt, dt);
+    let hy;
+    if (spectator) { _rp.copy(ps.sp); _rq.copy(ps.sq); _rh.copy(ps.sh); hy = ps.shYaw; }
+    else {
+      xfPoint(lFS, _rp, ps.sp.x, ps.sp.y, ps.sp.z); xfQuat(lFS, _rq, ps.sq);
+      xfPoint(lFS, _rh, ps.sh.x, ps.sh.y, ps.sh.z); hy = ps.shYaw + lFS.yaw;
+    }
+    if (!ps.drone) { ps.drone = createDrone({ lite: true, color: PALETTE[ps.slot % PALETTE.length], slot: ps.slot, spectator }); scene.add(ps.drone); }
+    const d = ps.drone, u = d.userData, dim = spectator && !ps.specAl ? 0.35 : 1, a = ps.fade * dim;
+    d.visible = true; d.position.copy(_rp); u.model.quaternion.copy(_rq);
+    u.bodyMat.opacity = u.accentMat.opacity = u.ringMat.opacity = a; u.tagMat.opacity = ps.fade * (dim < 1 ? 0.6 : 1);
+    const blur = smoothstep(ps.srpm, 300, 1800);
+    u.discMat.opacity = 0.22 * blur * a; u.disc.visible = blur > 0.01;
+    const ground = spectator ? spec.floorY : surfaceHeightAt(_rp.x, _rp.y, _rp.z), h = Math.max(0, _rp.y - ground);
+    u.shadow.visible = h < 2.2; u.shadow.position.y = ground - _rp.y + 0.004;
+    const ss = 0.34 + h * 0.2; u.shadow.scale.set(ss, 1, ss); u.shMat.opacity = 0.6 * clamp(1 - h / 2.2, 0, 1) * a;
+    if (spectator) {
+      if (!ps.user) ps.user = makeUserMarker(PALETTE[ps.slot % PALETTE.length], 0, scene, true);
+      updateUserMarker(ps.user, _rh, hy, spec.floorY, 0.5 * a);
+    } else {
+      if (mon.on) {                                           // ドローン視点モニター用の簡易マーカー (monScene, layer 3, ライト不要)
+        if (!ps.monD) {
+          if (!monDroneGeo) monDroneGeo = new THREE.ConeGeometry(0.05, 0.16, 10).rotateX(-Math.PI / 2);
+          ps.monD = setLayer(new THREE.Mesh(monDroneGeo, new THREE.MeshBasicMaterial({ color: PALETTE[ps.slot % PALETTE.length], toneMapped: false })), MON_LAYER); monScene.add(ps.monD);
+        }
+        if (!ps.monU) ps.monU = makeUserMarker(PALETTE[ps.slot % PALETTE.length], MON_LAYER, monScene);
+        ps.monD.visible = true; ps.monD.position.set(_rp.x, _rp.y + 0.07, _rp.z); ps.monD.quaternion.copy(_rq);
+        updateUserMarker(ps.monU, _rh, hy, room.floorY, 1);
+      } else { if (ps.monD) ps.monD.visible = false; if (ps.monU) ps.monU.g.visible = false; }
+      ps.dist = head.valid ? Math.hypot(_rp.x - head.pos.x, _rp.y - head.pos.y, _rp.z - head.pos.z) : 99;
+      net.aud[net.audN++] = ps;
+    }
+  }
+  net.unaligned = unal; net.nConn = nConn; net.nSpec = nSpec; net.nNone = nNone; net.nOther = nOther; net.nWait = nWait; net.nDiff = nDiff;
+}
+
+/* ---- 他機のプロペラ音 (最も近い3機まで。軽量ボイス: ノコギリ波2本 + LPF + 3D) ---- */
+const raud = { voices: [], master: null, t: 0, chosen: [null, null, null] };
+function remoteAudioInit() {
+  const ctx = audio.ctx;
+  if (!ctx || raud.master) return;
+  try {
+    const master = ctx.createGain(); master.gain.value = 0.5; master.connect(ctx.destination); raud.master = master;
+    for (let i = 0; i < 3; i++) {
+      const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1100;
+      const g = ctx.createGain(); g.gain.value = 0;
+      const pn = ctx.createPanner(); pn.panningModel = 'HRTF'; pn.distanceModel = 'inverse'; pn.refDistance = 0.5; pn.rolloffFactor = 1.5; pn.maxDistance = 30;
+      const o1 = ctx.createOscillator(), o2 = ctx.createOscillator(), g1 = ctx.createGain(), g2 = ctx.createGain();
+      o1.type = o2.type = 'sawtooth'; g1.gain.value = 0.5; g2.gain.value = 0.3; o1.frequency.value = o2.frequency.value = 200;
+      o1.connect(g1); o2.connect(g2); g1.connect(lp); g2.connect(lp); lp.connect(g); g.connect(pn); pn.connect(master);
+      o1.start(); o2.start();
+      raud.voices.push({ g, pn, o1, o2, ps: null, freeAt: 0 });
+    }
+  } catch (e) { raud.voices.length = 0; raud.master = null; }
+}
+function remoteAudioStop() {
+  const m = raud.master, vs = raud.voices.slice();
+  raud.master = null; raud.voices.length = 0;
+  if (!m) return;
+  try { const t = m.context.currentTime; m.gain.cancelScheduledValues(t); m.gain.setValueAtTime(m.gain.value, t); m.gain.linearRampToValueAtTime(0, t + 0.1); } catch (e) { /* ignore */ }
+  setTimeout(() => { for (const v of vs) { try { v.o1.stop(); v.o2.stop(); v.g.disconnect(); } catch (e) { /* ignore */ } } try { m.disconnect(); } catch (e) { /* ignore */ } }, 160);
+}
+function netUpdateAudio(nowMs) {
+  const ctx = audio.ctx;
+  if (!ctx || net.role !== 'pilot' || nowMs - raud.t < 33) return;
+  raud.t = nowMs;
+  if (!raud.master) { if (net.audN === 0) return; remoteAudioInit(); if (!raud.master) return; }
+  const t = ctx.currentTime, ch = raud.chosen, V = raud.voices;
+  ch[0] = ch[1] = ch[2] = null;
+  for (let k = 0; k < 3; k++) {                                // 近い順に最大3機 (無音に近い機は除く)
+    let best = null, bd = 1e9;
+    for (let i = 0; i < net.audN; i++) {
+      const ps = net.aud[i];
+      if (ps.srpm < 150 || ps.dist >= bd || ps.fade < 0.5 || ch[0] === ps || ch[1] === ps) continue;
+      best = ps; bd = ps.dist;
+    }
+    ch[k] = best;
+  }
+  for (let i = 0; i < V.length; i++) {                         // 選から外れたボイスは先にフェードアウト (位置/周波数を動かすのは無音になってから)
+    const v = V[i];
+    if (v.ps && v.ps !== ch[0] && v.ps !== ch[1] && v.ps !== ch[2]) { v.g.gain.setTargetAtTime(0, t, 0.02); v.ps = null; v.freeAt = t + 0.12; }
+  }
+  for (let k = 0; k < 3; k++) {
+    const c = ch[k];
+    if (!c || !c.drone) continue;
+    let v = null, has = false;
+    for (let i = 0; i < V.length; i++) { if (V[i].ps === c) has = true; else if (!v && !V[i].ps && t >= V[i].freeAt) v = V[i]; }
+    if (has || !v) continue;
+    v.ps = c; const f = Math.max(20, c.srpm / 60 * 2);
+    v.o1.frequency.setValueAtTime(f, t); v.o2.frequency.setValueAtTime(f * 1.012, t);
+    setPannerPos(v.pn, c.drone.position.x, c.drone.position.y + 0.07, c.drone.position.z);
+  }
+  for (let i = 0; i < V.length; i++) {
+    const v = V[i], c = v.ps;
+    if (!c || !c.drone) continue;
+    const f = Math.max(20, c.srpm / 60 * 2);
+    v.o1.frequency.setTargetAtTime(f, t, 0.04); v.o2.frequency.setTargetAtTime(f * 1.012, t, 0.04);
+    setPannerPos(v.pn, c.drone.position.x, c.drone.position.y + 0.07, c.drone.position.z);
+    v.g.gain.setTargetAtTime(0.3 * (0.2 + 0.8 * smoothstep(c.srpm, 300, C.RPM_HOVER * 1.2)) * c.fade, t, 0.06);
+  }
+}
+function setPannerPos(p, x, y, z) { if (p.positionX) { p.positionX.value = x; p.positionY.value = y; p.positionZ.value = z; } else p.setPosition(x, y, z); }
+
+/** メインループから (ルーム参加中のみ): 位置合わせ更新 → 20Hz送信 → 他機の表示 → 音 */
+function netFrame(avgRpm) {
+  const t0 = performance.now(), dt = Math.min((t0 - net.frameT) / 1000, 0.5);   // 通信側は実経過時間で動かす (物理用に頭打ちした dt は使わない)
+  net.frameT = t0;
+  updateAlignment();
+  calUpdateMarkers(t0);
+  net.txAcc += dt;
+  if (net.txAcc >= 1 / C.NET_HZ) { net.txAcc = Math.min(net.txAcc - 1 / C.NET_HZ, 1 / C.NET_HZ); netTxState(t0, avgRpm); }
+  netUpdateRemotes(t0, dt);
+  netUpdateAudio(t0);
+  net.perfMs += performance.now() - t0; net.perfN++;
+  if (dbg.postNet) dbg.postNet(t0);
+}
+
+/* =====================================================================
+ * 18. PC観戦モード (ルーム指定 + immersive-ar 非対応の端末)
+ *   自機なし・キーボード操縦なし。共有座標系 (= 恒等) にそのまま全員のドローンを描く。
+ *   部屋モデルは「基準グループ」の最小スロットのパイロットが送った平面から。無ければ床グリッド。
+ * ===================================================================== */
+const spec = {
+  on: false, follow: -1, top: false, savedPh: 0.5, fitted: false, floorY: 0, acc: 1, rm: null, grid: null, gridSize: 0,
+  refSlot: -1, refVer: -1, refKey: '', hasPlanes: false, el: null, hd: null, st: null, list: null, empty: null, hrow: null, rowsSig: '',
+  vx: -1, vy: -1, vw: -1, vh: -1, clsAcc: 1, userCam: false, fitN: -1, fitVer: -2,
+};
+const SPEC_STATUS = { idle: '', loading: '通信ライブラリを読み込み中…', joining: 'ルームに接続中…', ready: '接続済み', reconnecting: 'サーバー再接続中（観戦は継続）', failed: '接続できません' };
+
+function startSpectator(roomName) {
+  spec.on = true; spec.follow = -1; spec.top = false; spec.fitted = false; spec.userCam = false; spec.fitN = -1; spec.floorY = 0; spec.refSlot = -1; spec.refVer = -1;
+  startEl.classList.add('hidden');
+  renderer.domElement.style.display = 'block';
+  desk.visible = false; drone.visible = false; shadow.visible = false; hudMesh.visible = false; monMesh.visible = false;
+  renderer.setClearColor(0x0b0f14, 1);
+  Object.assign(orbit, { th: 0.5, ph: 0.6, r: 7, tx: 0, ty: 0.8, tz: 0, rMin: 0.5, rMax: 80, phMin: 0.03, phMax: 1.55 });
+  if (!spec.grid) {
+    spec.grid = new THREE.GridHelper(1, 20, 0x8aa4bf, 0x4a6078); scene.add(spec.grid);
+    spec.rm = createRoomModel(scene, 0, 0.22);
+  }
+  spec.grid.visible = true;
+  specBuildDom(); specLayout();
+  net.retryN = 0;
+  const pj = netJoin(roomName, 'spectator'); if (pj && pj.catch) pj.catch(() => {});
+}
+
+function specBuildDom() {
+  const el = document.getElementById('roster');
+  el.textContent = ''; el.hidden = false;
+  const mk = (cls, parent) => { const d = document.createElement('div'); d.className = cls; parent.appendChild(d); return d; };
+  spec.el = el; spec.hd = mk('hd', el); spec.st = mk('st', el);
+  spec.hrow = mk('hrow', el);
+  for (const t of ['', '番', '状態', '高度', '速度', '位置合せ']) { const sp = document.createElement('span'); sp.textContent = t; spec.hrow.appendChild(sp); }
+  for (let i = 3; i < 6; i++) spec.hrow.children[i].style.textAlign = 'right';
+  spec.list = mk('list', el); spec.empty = mk('empty', el);
+  spec.empty.textContent = 'パイロットの参加を待っています…';
+  mk('keys', el).textContent = 'ドラッグ=回転 / ホイール=ズーム / 右ドラッグ・Shift+ドラッグ=移動 / F=全体表示 / T=真上 / 1〜9,0 または名簿の行をクリック=追尾 / Esc=追尾解除';
+  spec.rowsSig = '';
+}
+/** 3Dビューを名簿の外側 (広い画面=右側 / 狭い画面=下側) だけに描く。名簿が部屋やドローンを隠さない。 */
+function specLayout() {
+  const el = spec.el;
+  if (!el) return;
+  const W = window.innerWidth, H = window.innerHeight, top = W < 820;
+  if (el.classList.contains('top') !== top) el.classList.toggle('top', top);
+  const r = el.getBoundingClientRect();
+  let x = 0, y = 0, w = W, h = H;
+  if (top) { y = Math.min(Math.round(r.height), Math.round(H * 0.5)); h = H - y; } else { x = Math.round(r.width); w = W - x; }
+  w = Math.max(w, 64); h = Math.max(h, 64);
+  if (x === spec.vx && y === spec.vy && w === spec.vw && h === spec.vh) return;
+  spec.vx = x; spec.vy = y; spec.vw = w; spec.vh = h;
+  renderer.setSize(w, h);
+  const cs = renderer.domElement.style; cs.left = x + 'px'; cs.top = y + 'px'; cs.right = 'auto'; cs.bottom = 'auto';
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+
+function specClassify() {
+  const keys = [], cnt = [], first = [];
+  for (const ps of net.list) {
+    if (ps.role === 'spectator' || !ps.hasState || ps.kind === NET_KIND_NONE) continue;
+    const k = ps.kind === NET_KIND_MANUAL ? 'm' : 'a:' + ps.id;
+    let i = keys.indexOf(k); if (i < 0) { i = keys.length; keys.push(k); cnt.push(0); first.push(ps.slot); }
+    cnt[i]++;
+  }
+  let bi = -1;
+  for (let i = 0; i < keys.length; i++) if (bi < 0 || cnt[i] > cnt[bi] || (cnt[i] === cnt[bi] && first[i] < first[bi])) bi = i;
+  spec.refKey = bi >= 0 ? keys[bi] : '';
+  for (const ps of net.list) ps.specAl = ps.kind !== NET_KIND_NONE && !!spec.refKey && (ps.kind === NET_KIND_MANUAL ? 'm' : 'a:' + ps.id) === spec.refKey;
+}
+
+const _pb = new THREE.Vector3();
+function specSceneUpdate(nowMs, dt) {
+  spec.clsAcc += dt; if (spec.clsAcc >= 0.1) { spec.clsAcc = 0; specClassify(); }   // 10Hzで十分 (毎フレームの配列確保を避ける)
+  // --- 部屋モデル: 基準グループの最小スロットで平面を送ってきたパイロット ---
+  let ref = null;
+  for (const ps of net.list) if (ps.role !== 'spectator' && ps.specAl && ps.planes && ps.planes.length && (!ref || ps.slot < ref.slot)) ref = ps;
+  if (ref && (ref.slot !== spec.refSlot || ref.planesVer !== spec.refVer)) {
+    spec.refSlot = ref.slot; spec.refVer = ref.planesVer;
+    let fy = 1e9, fl = 1e9;
+    for (const pl of ref.planes) if (pl.horiz) { if (pl.y < fy) fy = pl.y; if (pl.label === 'floor' && pl.y < fl) fl = pl.y; }
+    spec.floorY = fl < 1e8 ? fl : (fy < 0.6 ? fy : 0);
+    buildRoomGeometry(spec.rm, ref.planes, null, spec.floorY, true, 1.5);
+    spec.hasPlanes = true;
+  } else if (!ref && spec.refSlot >= 0) {
+    spec.refSlot = -1; spec.refVer = -1; spec.hasPlanes = false; setModelGeo(spec.rm.fill, [], []); setModelGeo(spec.rm.lines, [], []);
+  }
+  // --- 床と、全員が入る範囲 ---
+  let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9, gy = 1e9, n = 0;
+  for (const ps of net.list) {
+    if (ps.role === 'spectator' || !ps.hasState || !ps.shown) continue;
+    n++;
+    for (let k = 0; k < 2; k++) {
+      const v = k ? ps.sh : ps.sp;
+      if (v.x < x0) x0 = v.x; if (v.x > x1) x1 = v.x; if (v.z < z0) z0 = v.z; if (v.z > z1) z1 = v.z;
+    }
+    if (ps.sp.y - ps.h / 100 < gy) gy = ps.sp.y - ps.h / 100;
+  }
+  if (!spec.hasPlanes) spec.floorY = n && gy < 1e8 ? Math.min(gy, 0.5) : 0;
+  spec.grid.visible = !spec.hasPlanes;
+  if (n) {
+    const size = clamp(Math.ceil(Math.max(x1 - x0, z1 - z0, 2) * 1.6 + 2), 4, 60);
+    if (Math.abs(size - spec.gridSize) > 0.01) { spec.gridSize = size; spec.grid.scale.setScalar(size); }
+    spec.grid.position.set((x0 + x1) / 2, spec.floorY + 0.002, (z0 + z1) / 2);
+  }
+  // 視点を触るまでは、人数や部屋モデルが変わるたびに全体が入るよう合わせ直す (最初の1人だけに寄った視点のまま、後から来た人が画面外になるのを防ぐ)。F で再び自動に戻る。
+  if (n && !spec.userCam && (n !== spec.fitN || spec.refVer !== spec.fitVer)) { specFit(); spec.fitN = n; spec.fitVer = spec.refVer; spec.fitted = true; }
+}
+
+function specFit() {
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
+  const add = (x, y, z) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z; };
+  for (const ps of net.list) {
+    if (ps.role === 'spectator' || !ps.hasState) continue;
+    add(ps.sp.x, ps.sp.y, ps.sp.z); add(ps.sh.x, ps.sh.y, ps.sh.z);
+  }
+  if (spec.hasPlanes) {
+    const ref = net.peers.get(spec.refSlot);
+    if (ref && ref.planes) for (const pl of ref.planes) for (let k = 0; k < 4; k++) { _pb.set((k & 1) ? pl.maxX : pl.minX, 0, (k & 2) ? pl.maxZ : pl.minZ).applyMatrix4(pl.m); add(_pb.x, _pb.y, _pb.z); }
+  }
+  if (x0 > x1) { add(-2, 0, -2); add(2, 2, 2); }
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2;
+  const rad = Math.max(1.5, 0.5 * Math.hypot(x1 - x0, y1 - y0, z1 - z0));
+  const fv = camera.fov * Math.PI / 180, fe = Math.min(fv, 2 * Math.atan(Math.tan(fv / 2) * camera.aspect));
+  orbit.tx = cx; orbit.ty = cy; orbit.tz = cz; orbit.r = clamp(rad * 1.02 / Math.sin(fe / 2), orbit.rMin, orbit.rMax);
+}
+
+function specKey(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.code === 'KeyF') { specFit(); spec.follow = -1; spec.userCam = false; spec.fitN = -1; }
+  else if (e.code === 'KeyT') {
+    spec.top = !spec.top;
+    if (spec.top) { spec.savedPh = orbit.ph; orbit.ph = orbit.phMax; } else orbit.ph = spec.savedPh;
+  } else if (e.code === 'Escape') spec.follow = -1;
+  else if (/^(Digit|Numpad)\d$/.test(e.code)) {
+    const d = +e.code.slice(-1), slot = d === 0 ? 9 : d - 1, ps = net.peers.get(slot);
+    if (ps && ps.hasState && ps.role !== 'spectator') { spec.follow = slot; spec.userCam = true; }
+  }
+}
+
+function specCamera(dt) {
+  if (spec.follow >= 0) {
+    const ps = net.peers.get(spec.follow);
+    if (ps && ps.shown && ps.drone) {
+      const k = 1 - Math.exp(-dt * 8), p = ps.drone.position;
+      orbit.tx += (p.x - orbit.tx) * k; orbit.ty += (p.y + 0.1 - orbit.ty) * k; orbit.tz += (p.z - orbit.tz) * k;
+    } else if (!ps) spec.follow = -1;
+  }
+  updateOrbit();
+}
+
+function specRosterUpdate() {
+  const pilots = [];
+  for (const ps of net.list) if (ps.role !== 'spectator' && ps.hasState) pilots.push(ps);
+  spec.hd.textContent = 'ルーム: ' + net.room;
+  const stTxt = net.status === 'failed' ? (net.statusText || SPEC_STATUS.failed) : (SPEC_STATUS[net.status] || '');
+  spec.st.textContent = stTxt + (net.status === 'ready' ? ' ・ パイロット ' + pilots.length + '人' + (net.nSpec ? ' ・ 観戦 ' + (net.nSpec + 1) + '人' : '') : '');
+  spec.empty.hidden = pilots.length > 0;
+  const sig = pilots.map((p) => p.slot).join(',');
+  const now = performance.now();
+  for (const ps of pilots) {
+    if (!ps.row) {
+      const r = document.createElement('div'); r.className = 'row';
+      for (const c of ['sw', 'no', 'c3', 'c4', 'c5', 'al']) { const s = document.createElement('span'); s.className = c; r.appendChild(s); }
+      r.children[0].style.background = hex6(PALETTE[ps.slot % PALETTE.length]);
+      r.children[1].textContent = String(ps.slot + 1);
+      const slot = ps.slot;
+      r.addEventListener('click', () => { spec.follow = spec.follow === slot ? -1 : slot; spec.userCam = true; });   // 行クリックで追尾 (10番以降は数字キーが無いので)
+      ps.row = r; spec.rowsSig = '';
+    }
+    const live = now - ps.lastState < C.NET_LOST_MS;
+    const al = !ps.specAl ? '未調整' : ps.kind === NET_KIND_MANUAL ? '2点' : '共有';   // 位置合わせの方式 (操縦モードの「自動/手動」と紛れない語にする)
+    const cells = [live ? MODE_NAMES[ps.mode] + '・' + STATE_NAMES[ps.st] : '応答なし', (ps.h / 100).toFixed(2) + 'm', (ps.spd / 10).toFixed(1) + 'm/s', al];
+    for (let i = 0; i < 4; i++) { const el = ps.row.children[2 + i]; if (el.textContent !== cells[i]) el.textContent = cells[i]; }
+    ps.row.children[5].className = ps.specAl ? 'al' : 'al bad';
+    ps.row.className = 'row' + (ps.specAl ? '' : ' dim') + (spec.follow === ps.slot ? ' fol' : '');
+  }
+  if (sig !== spec.rowsSig) { spec.rowsSig = sig; for (const ps of pilots) spec.list.appendChild(ps.row); }   // スロット順に並べ直す (appendChild は移動)
+}
+
+function specFrame(dt, nowMs) {
+  dt = Math.min((nowMs - net.frameT) / 1000, 0.5); net.frameT = nowMs;
+  netUpdateRemotes(nowMs, dt);
+  specSceneUpdate(nowMs, dt);
+  specCamera(dt);
+  spec.acc += dt;
+  if (spec.acc >= 0.2) { spec.acc = 0; specRosterUpdate(); specLayout(); }
+}
+
+window.addEventListener('pagehide', () => { if (net.on) netLeave(true); });   // タブを閉じる/離れる時はきれいに退室
+
 // デバッグ用ハンドル (?debug 付きURLのみ)。テストから内部状態と XR 向け関数を直接叩く。
-if (new URLSearchParams(location.search).has('debug')) {
+if (DEBUG) {
+  const dv = new THREE.Vector3(), dq = new THREE.Quaternion();
+  const yawOf = (q) => { dv.set(0, 0, -1).applyQuaternion(q); return Math.atan2(-dv.x, -dv.z); };
   window.__drone = {
     THREE, C, pos, vel, quat, sim, shadowBias, shadowMat, input, head, room, planes, auto, hud, hudMesh, audio, drone, mon, monMesh, monRT, monScene, fpvCam, roomModel, roomFill, roomLines, userMark, MON_LAYER, planeKind, shadow, camera, renderer, scene, orbit, tgt, vCmd, startCenter,
     stepSim, collide, updatePlanes, recomputeRoom, readXRInputs, placeHud, updateHeadXR, pickWaypoint, behindWall, surfaceHeightAt, surfaceClearance,
     toggleFlight, toggleMode, toggleHud, toggleMonitor, setMonitor, renderMonitor, updateFpvCamera, syncRoomModel, rebuildRoomModel, roomModelStale, resetWorld, placeDroneInitial, initAudio, stopAudio, frame,
     get yawCmd() { return yawCmd; }, get xrSession() { return xrSession; }, get placed() { return placed; },
     setLeftGrip(g) { hud.leftGrip = g; },
+    // --- マルチプレイ ---
+    net, align, cal, sharedSp, sFL, lFS, spec, dbg, LITE, PALETTE, raud, netJoin, netLeave, netOnLocalReset, netRescan, netTickBody, specLayout, calToggle, calSolve, calRecord, createDrone, setDroneColor, hashRoom, sampleRemote, isAlignedWith, startSpectator, specFit, getPs, netOnData,
+    /** 通信状態のスナップショット (JSON化できる形) */
+    netStatus() {
+      const now = performance.now();
+      return {
+        on: net.on, role: net.role, room: net.room, hash: net.hash, slot: net.slot, status: net.status, ready: net.ready, notice: net.notice, nConn: net.nConn, nSpec: net.nSpec, unaligned: net.unaligned,
+        align: { kind: align.kind, id: align.id, forced: align.forced }, tx: net.txCount, rx: net.rxCount, rxBad: net.rxBad, perfMs: net.perfN ? net.perfMs / net.perfN : 0,
+        scripts: Array.from(document.scripts).map((e) => e.src).filter(Boolean),
+        peers: net.list.map((ps) => ({ slot: ps.slot, role: ps.role, open: !!(ps.conn && ps.conn.open), dir: ps.conn ? ps.conn._dir : '', seq: ps.seq, rtt: ps.rtt, hasState: ps.hasState, kind: ps.kind, id: ps.id, shown: ps.shown, fade: ps.fade, age: now - ps.lastState, silent: now - ps.lastMsg, st: ps.st, mode: ps.mode, n: ps.n })),
+      };
+    },
+    /** 他機の表示位置 (自分のlocal座標 = シーン座標。観戦では共有座標) */
+    remoteWorld() {
+      return net.list.filter((ps) => ps.drone).map((ps) => ({ slot: ps.slot, visible: ps.drone.visible, shown: ps.shown, fade: ps.fade, pos: ps.drone.position.toArray(), yaw: yawOf(ps.drone.userData.model.quaternion), q: ps.drone.userData.model.quaternion.toArray(), opacity: ps.drone.userData.bodyMat.opacity, tagOpacity: ps.drone.userData.tagMat.opacity }));
+    },
+    /** sharedFromLocal を強制 (位置合わせの記述子も指定) */
+    forceSharedFromLocal(yaw, tx, ty, tz, kind, id) { align.forced = true; setSharedFromLocal(yaw, tx, ty, tz); align.kind = kind; align.id = id || ''; align.rev = (align.rev + 1) % 1000000000; },
+    clearForce() { align.forced = false; },
+    /** 手動キャリブレーションを、局所座標の2点から直接成立させる (実機のトリガー記録と同じ calSolve を通る) */
+    fakeManual(p1, p2) { return calSolve(dv.set(p1[0], p1[1], p1[2]), tmpV.set(p2[0], p2[1], p2[2])); },
+    /** 自機を指定状態に固定 (シミュレーション停止)。x,y,z は local 座標。 */
+    setLocalDrone(o) {
+      dbg.freeze = true; pos.set(o.x, o.y, o.z); vel.set(o.vx || 0, o.vy || 0, o.vz || 0); sim.yaw = o.yaw || 0; sim.pitch = o.pitch || 0; sim.roll = o.roll || 0;
+      buildQuat(quat, sim.yaw, sim.pitch, sim.roll); sim.state = o.state == null ? ST_LANDED : o.state; sim.mode = o.mode || 0; sim.rpm.fill(o.rpm || 0); sim.groundY = o.groundY || 0;
+    },
+    unfreeze() { dbg.freeze = false; },
+    drawCalls() { return renderer.info.render.calls; },
+    yawOf,
   };
 }
 
 (async function boot() {
+  const ROOM_KEY = 'mrdrone.room';
+  document.getElementById('ver').textContent = APP_VERSION;
+  const roomEl = document.getElementById('room');
+  let roomInit = '';
+  try { roomInit = new URLSearchParams(location.search).get('room') || ''; } catch (e) { roomInit = ''; }            // ?room= を優先
+  if (!roomInit) { try { roomInit = localStorage.getItem(ROOM_KEY) || ''; } catch (e) { roomInit = ''; } }          // 次に前回の値 (ストレージ不可でも動く)
+  roomEl.value = roomInit.slice(0, 40);
+  const currentRoom = () => roomEl.value.trim();
+  const commitRoom = () => { const r = currentRoom(); try { localStorage.setItem(ROOM_KEY, r); } catch (e) { /* ignore */ } return r; };
+
   let supported = false;
   try { supported = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')); } catch (e) { supported = false; }
   if (supported) {
@@ -1319,23 +2825,33 @@ if (new URLSearchParams(location.search).has('debug')) {
     const go = async (silent) => {
       if (starting || renderer.xr.isPresenting) return;
       starting = true; btn.disabled = true; msgEl.textContent = '';
+      const roomName = commitRoom();                          // 空ならソロ (通信コードは一切動かない)
       initAudio();                                            // ユーザー操作内で開始
-      try { await startXR(); }
-      catch (err) { stopAudio(); btn.disabled = false; if (!silent) msgEl.textContent = 'MRを開始できませんでした: ' + (err && err.message ? err.message : err); }
+      try { await startXR(roomName); }
+      catch (err) {
+        stopAudio(); btn.disabled = false;
+        if (err && err.needTap) msgEl.textContent = 'もう一度タップしてください（共有スペース機能なしで開始します）';
+        else if (!silent) msgEl.textContent = 'MRを開始できませんでした: ' + (err && err.message ? err.message : err);
+      }
       starting = false;
     };
-    // 開始画面のどこを押しても開始 (ボタンを狙わなくてよい)
-    startEl.addEventListener('click', () => go(false));
+    // 開始画面のどこを押しても開始 (ボタンを狙わなくてよい)。ただしルーム名の入力欄とそのラベルは除く。
+    startEl.addEventListener('click', (e) => { if (e.target && e.target.closest && e.target.closest('#roomWrap')) return; go(false); });
     // アプリとして起動された場合など、操作なしで開始できる環境ではそのままMRに入る。不可なら黙ってボタン待ち。
     go(true);
   } else {
-    // デスクトッププレビュー
-    msgEl.textContent = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / V=ドローン視点 / ドラッグ=視点';
-    btn.textContent = 'PCプレビューを開始';
+    // デスクトッププレビュー (ルーム名があれば観戦モード)
+    const previewMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / V=ドローン視点 / ドラッグ=視点';
+    const specMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。ルーム名が入力されているので、PCから観戦できます（自機は飛ばしません）。';
+    const refresh = () => { const r = currentRoom(); btn.textContent = r ? '観戦を開始' : 'PCプレビューを開始'; msgEl.textContent = r ? specMsg : previewMsg; };
+    roomEl.addEventListener('input', refresh); refresh();
     renderer.domElement.style.display = 'block';
     resetWorld(); placeHud();
     renderer.setAnimationLoop(frame);
-    btn.addEventListener('click', () => { initAudio(); startEl.classList.add('hidden'); });
+    btn.addEventListener('click', () => {
+      const r = commitRoom();
+      if (r) startSpectator(r); else { initAudio(); startEl.classList.add('hidden'); }
+    });
   }
 })();
 </script>
