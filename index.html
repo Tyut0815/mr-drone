@@ -19,6 +19,7 @@
   .sub { color:var(--muted); margin:0 0 16px; font-size:14px; }
   ul { margin:0 0 18px; padding-left:20px; line-height:1.7; font-size:14px; }
   li b { color:var(--accent); font-weight:600; }
+  li.warn { color:#ffd479; }
   button { appearance:none; border:0; cursor:pointer; width:100%; padding:16px; border-radius:14px; font-size:20px; font-weight:700; color:#06231a; background:var(--accent); }
   button:disabled { opacity:.5; cursor:default; }
   #msg { margin:14px 0 0; font-size:14px; line-height:1.6; color:#ffd479; min-height:1em; }
@@ -49,6 +50,8 @@
   #roster .c4, #roster .c5, #roster .al { text-align:right; }
   #roster .al { font-weight:700; color:#8dffd8; }
   #roster .al.bad { color:#ffd479; }
+  #roster .wbtn { appearance:none; width:auto; margin:0 0 0 .7em; padding:.1em .8em; border-radius:.6em; border:1px solid #ffffff66; background:#ffffff1c; color:#fff; font-size:.62em; font-weight:700; vertical-align:middle; cursor:pointer; }
+  #roster .wbtn:hover { background:#ffffff40; }
   #roster .keys { margin-top:12px; color:#9fb0c3; font-size:.74em; line-height:1.55; white-space:normal; }
   #roster.top .keys { display:none; }
   #roomHint { margin:6px 0 0; font-size:11.5px; line-height:1.5; color:var(--muted); }
@@ -70,6 +73,8 @@
       <li><b>自動モード</b>：ドローンが部屋の中を自由に飛び回ります。</li>
       <li><b>手動モード</b>：左スティック＝上下・旋回、右スティック＝前後・左右。</li>
       <li><b>A</b>＝自動/手動切替　<b>B</b>＝離陸/着陸　<b>右トリガー長押し</b>＝手元へ呼び戻し　<b>X</b>＝HUD表示切替　<b>左トリガー</b>＝ドローン視点　<b>Y</b>＝位置合わせ（ルーム参加時）</li>
+      <li><b>右スティック長押し（0.5秒）</b>＝MR ⇄ VR（自然の中を飛ぶ）ワールド切替　<b>左スティック押込み</b>＝視点切替（VR：一人称 ⇄ 三人称）</li>
+      <li class="warn">VRでは周囲が見えません。その場から動かずに操作してください</li>
       <li>コントローラーなし（ハンドトラッキング）の場合は自動モードで飛行します。ピンチで離着陸。</li>
     </ul>
     <div id="roomWrap"><label for="room">ルーム名（空欄なら1人で飛行）</label><input id="room" type="text" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ルーム名（空欄なら1人で飛行）">
@@ -83,8 +88,9 @@
 <script type="module">
 import * as THREE from 'three';
 
-const APP_VERSION = 'v0.5';                                    // 開始画面に表示するビルド識別子
+const APP_VERSION = 'v0.6';                                    // 開始画面に表示するビルド識別子
 const DEBUG = new URLSearchParams(location.search).has('debug');
+const START_VR = new URLSearchParams(location.search).get('world') === 'vr';   // ?world=vr: VRネイチャーワールドで開始 (既定はMR)
 
 /* =====================================================================
  * 1. 定数 (チューニングパラメータ)
@@ -128,6 +134,21 @@ const C = Object.freeze({
   NET_LOAD_MS: 8000, NET_OPEN_MS: 10000,   // PeerJS読み込みの待ち時間 / シグナリング接続・データ接続の待ち時間 [ms]
   NET_PLANES_MIN_MS: 2000,                 // 平面の再送の最短間隔 [ms]
   CAL_MIN_DIST: 0.3,                       // 手動位置合わせの2点間の最小水平距離 [m]
+  // --- VRネイチャーワールド (MRと切替)。MRの定数は上のまま。VR中の飛行パラメータは P_VR で切り替える (C は凍結のまま) ---
+  VR_SIZE: 600, VR_GRID: 128,              // 地形の一辺 [m] / 一辺の分割数 (128x128 マス = 32768 三角形)
+  VR_MEADOW_R: 14, VR_WATER_Y: -4, VR_PAD_R: 4,   // 平らな離陸場の半径 [m] / 湖の水面高 [m] / パッドを並べる円の半径 [m] (8機ごとに外側の輪)
+  VR_EDGE_SOFT: 20, VR_CEIL: 120,          // 世界の縁の柔らかい壁の幅 [m] / 高度の上限 [m]
+  VR_SEED: 20240611, VR_TREES_CONIFER: 700, VR_TREES_BROAD: 300, VR_ROCKS: 150,   // 固定シード (全端末で同一の世界) / 針葉樹・広葉樹・岩の本数
+  VR_FOG: 0.0021, VR_HEMI_I: 1.9, VR_SUN_I: 2.6,   // VR中の霧の濃さ (FogExp2) / 半球光 / 太陽光の強さ
+  VR_MAN_V: 9, VR_MAN_VY: 4, VR_MAN_YAW: 2.0, VR_MAX_TILT: 35 * Math.PI / 180,   // VRの手動: 水平速度 [m/s] / 上下速度 [m/s] / 旋回 [rad/s] / 最大傾き
+  VR_TAKEOFF_ALT: 3, VR_TAKEOFF_VY: 2.0, VR_LAND_VY: 3.0, VR_DRAG_QUAD: 0.03,   // 離陸高度 [m] / 離陸・着陸の最大上下速度 [m/s] / 空気抵抗(2乗) ※高速でも傾き上限で9m/sに届くよう MR より小さい
+  VR_AUTO_V: 6, VR_AUTO_VY: 3.5, VR_RECALL_V: 12,   // AUTO周遊の最高速度 / 上下速度 / 呼び戻しの最高速度 [m/s]
+  VR_TPV_BACK: 2.2, VR_TPV_UP: 0.75, VR_CLEAR: 0.5,  // 三人称: 機体の後ろ・上の距離 [m] (30cmの機体が視角 約7.5°・水平から約19°下に見える) / 地表からの最低高さ [m]
+  VR_TPV_POS_T: 0.25, VR_TPV_YAW_T: 0.35, VR_FPV_YAW_T: 0.06,   // 視点の追従の時定数 [s]: 三人称の位置(臨界減衰) / 三人称の向き / 一人称の向き (最大旋回 2 rad/s での遅れ = 率×時定数: 一人称 約7° / 三人称 約40°)
+  VR_VIGNETTE: true, VR_VIGNETTE_MAX: 0.55, VR_VIG_SPEED: 8, VR_VIG_YAW: 1.5,   // 酔い対策のビネット: 有効 / 最大の濃さ / 最大になる視点速度 [m/s] / 旋回速度 [rad/s]
+  VR_FADE_S: 0.25, VR_HOLD_S: 0.5,         // 切替時の暗転(出/入それぞれ) [s] / 右スティック長押しの時間 [s]
+  VR_NEAR: 0.05, VR_FAR: 2500,             // VR中のカメラ範囲 [m] (霧で見えなくなる距離より十分遠く / HUD・暗幕より手前)
+  NET_MAX_POS_VR: 400,                     // VRワールドで受信する座標の上限 [m]
 });
 
 /* =====================================================================
@@ -402,6 +423,14 @@ const vCmd = new THREE.Vector3();    // 速度指令 (ワールド)
 let yawCmd = 0;                      // ヨーレート指令
 let pitchCmd = 0, rollCmd = 0;       // 姿勢指令
 
+// 飛行パラメータ。MR の値は C のまま (従来と同一のビット列)。VR 中は P_VR へ切り替える (C は凍結のまま、間接参照で切替)。
+const P_MR = Object.freeze({ MAN_V: C.MAN_V, MAN_VY: C.MAN_VY, MAN_YAW: C.MAN_YAW, MAX_TILT: C.MAX_TILT, TAKEOFF_ALT: C.TAKEOFF_ALT, DRAG_QUAD: C.DRAG_QUAD,
+  AUTO_VMAX: C.AUTO_VMAX, AUTO_VY_MAX: C.AUTO_VY_MAX, RECALL_VMAX: C.RECALL_VMAX, TAKEOFF_VY: 0.8, LAND_VY: 0.45, DRAG_FF: 0 });
+const P_VR = Object.freeze({ MAN_V: C.VR_MAN_V, MAN_VY: C.VR_MAN_VY, MAN_YAW: C.VR_MAN_YAW, MAX_TILT: C.VR_MAX_TILT, TAKEOFF_ALT: C.VR_TAKEOFF_ALT, DRAG_QUAD: C.VR_DRAG_QUAD,
+  AUTO_VMAX: C.VR_AUTO_V, AUTO_VY_MAX: C.VR_AUTO_VY, RECALL_VMAX: C.VR_RECALL_V, TAKEOFF_VY: C.VR_TAKEOFF_VY, LAND_VY: C.VR_LAND_VY, DRAG_FF: 1 });
+const P = Object.assign({}, P_MR);   // 今使っているパラメータ (ワールド切替で書き換える)
+const world = { vr: false, cam: 1, home: new THREE.Vector3() };   // vr: VRネイチャーワールド中 / cam: 0=一人称(FPV) 1=三人称(TPV) / home: VRの離着陸パッド
+
 // PID群: ホールド(位置→加速度) と 速度モード(速度誤差→加速度)
 const pidPx = new PID(3.0, 0.6, 2.8, 2.0), pidPz = new PID(3.0, 0.6, 2.8, 2.0), pidPy = new PID(8.0, 4.0, 5.0, 0.8);
 const pidVx = new PID(3.5, 1.2, 0, 1.5), pidVz = new PID(3.5, 1.2, 0, 1.5), pidVy = new PID(5.0, 3.0, 0, 0.8);
@@ -610,16 +639,18 @@ function autoCommands(dt) {
 
 function manualCommands() {
   const s = Math.sin(sim.yaw), c = Math.cos(sim.yaw);
-  const vf = input.ry * C.MAN_V, vr = input.rx * C.MAN_V;
-  vCmd.set(-s * vf + c * vr, input.ly * C.MAN_VY, -c * vf - s * vr);
-  yawCmd = -input.lx * C.MAN_YAW;
+  const vf = input.ry * P.MAN_V, vr = input.rx * P.MAN_V;
+  vCmd.set(-s * vf + c * vr, input.ly * P.MAN_VY, -c * vf - s * vr);
+  yawCmd = -input.lx * P.MAN_YAW;
 }
 
 function computeCommands(dt) {
   vCmd.set(0, 0, 0); yawCmd = 0;
-  if (sim.state === ST_TAKEOFF) { vCmd.y = clamp((sim.takeY - pos.y) * 1.6, 0.2, 0.8); return; }
-  if (sim.state === ST_LANDING) { vCmd.y = -clamp(0.12 + (pos.y - sim.groundY) * 0.8, 0.12, 0.45); return; }
-  if (input.recall) {                                      // 頭の正面1mへ戻る
+  if (sim.state === ST_TAKEOFF) { vCmd.y = clamp((sim.takeY - pos.y) * 1.6, 0.2, P.TAKEOFF_VY); return; }
+  if (sim.state === ST_LANDING) { vCmd.y = -clamp(0.12 + (pos.y - sim.groundY) * 0.8, 0.12, P.LAND_VY); return; }
+  if (input.recall) {
+    if (world.vr) { vrRecallCommands(); return; }           // VR: 自分の離着陸パッドの真上3mへ
+    // 頭の正面1mへ戻る
     tmpV.copy(head.pos).addScaledVector(head.fwdH, C.RECALL_DIST);
     tmpV.y = Math.max(head.pos.y - 0.15, room.floorY + 0.5);
     tmpV.sub(pos).multiplyScalar(1.2);
@@ -629,7 +660,7 @@ function computeCommands(dt) {
     yawCmd = clamp(angleDiff(Math.atan2(-tmpV2.x, -tmpV2.z), sim.yaw) * 2.5, -1.6, 1.6);
     return;
   }
-  if (sim.mode === MODE_MANUAL) manualCommands(); else autoCommands(dt);
+  if (sim.mode === MODE_MANUAL) manualCommands(); else if (world.vr) vrAutoCommands(dt); else autoCommands(dt);
 }
 
 /* =====================================================================
@@ -641,6 +672,7 @@ function control(dt) {
   if (vCmd.x * vCmd.x + vCmd.z * vCmd.z > 0.0004) {
     sim.holdXZ = false;
     aDes.x = pidVx.step(vCmd.x - vel.x, 0, dt); aDes.z = pidVz.step(vCmd.z - vel.z, 0, dt);
+    if (P.DRAG_FF) { const dr = C.DRAG_LIN + P.DRAG_QUAD * Math.hypot(vCmd.x, vCmd.z); aDes.x += dr * vCmd.x; aDes.z += dr * vCmd.z; }   // VR: 空気抵抗の先回り補償 (定常で目標速度に届く。MRは0で従来どおり)
   } else {
     if (!sim.holdXZ) { sim.holdXZ = true; tgt.x = pos.x + vel.x * 0.35; tgt.z = pos.z + vel.z * 0.35; pidPx.reset(); pidPz.reset(); }
     aDes.x = pidPx.step(tgt.x - pos.x, -vel.x, dt); aDes.z = pidPz.step(tgt.z - pos.z, -vel.z, dt);
@@ -654,7 +686,7 @@ function control(dt) {
   }
   // 推力ベクトル (加速度単位) = 重力補償 + 要求加速度。傾きは最大30度に制限
   let ty = Math.max(C.G + aDes.y, 0.3 * C.G);
-  const hm = Math.hypot(aDes.x, aDes.z), maxH = ty * Math.tan(C.MAX_TILT);
+  const hm = Math.hypot(aDes.x, aDes.z), maxH = ty * Math.tan(P.MAX_TILT);
   let ax = aDes.x, az = aDes.z;
   if (hm > maxH) { ax *= maxH / hm; az *= maxH / hm; }
   const T = clamp(Math.hypot(ax, ty, az), 0, 2.0 * C.G);
@@ -690,7 +722,7 @@ function integrate(dt) {
   const wa = 0.012;
   buildQuat(quat, sim.yaw, sim.pitch + wa * wob(sim.t, 0.3), sim.roll + wa * wob(sim.t, 2.0));
   tmpV.set(0, 1, 0).applyQuaternion(quat);                 // 機体の上方向
-  const sp = vel.length(), drag = C.DRAG_LIN + C.DRAG_QUAD * sp;
+  const sp = vel.length(), drag = C.DRAG_LIN + P.DRAG_QUAD * sp;
   vel.x += (tmpV.x * sim.thrust - drag * vel.x) * dt;
   vel.y += (tmpV.y * sim.thrust - C.G - drag * vel.y) * dt;
   vel.z += (tmpV.z * sim.thrust - drag * vel.z) * dt;
@@ -701,6 +733,7 @@ function integrate(dt) {
  * 8. 衝突 (球 r=0.2 vs 平面 / 部屋のAABB / 地面)
  * ===================================================================== */
 function collide() {
+  if (world.vr) { collideVR(); return; }                    // VR: 地形・水面・樹木・世界の縁だけを見る (MRの平面・部屋の箱は参照しない)
   const R = C.RADIUS, e = C.RESTITUTION;
   // 平面
   for (let i = 0; i < planes.length; i++) {
@@ -759,7 +792,7 @@ function updateMotors(dt, thrustLike, pErr, rErr, yErr) {
 
 function stepSim(dt) {
   sim.t += dt;
-  sim.groundY = surfaceHeightAt(pos.x, pos.y, pos.z);
+  sim.groundY = world.vr ? vrGroundMax(pos.x, pos.z) : surfaceHeightAt(pos.x, pos.y, pos.z);
   const st = sim.state;
   if (st === ST_LANDED || (st === ST_TAKEOFF && sim.spool < 1)) {
     // 地上: スプールアップ/ダウンのみ
@@ -782,6 +815,7 @@ function stepSim(dt) {
   if (!(Number.isFinite(pos.x + pos.y + pos.z + vel.x + vel.y + vel.z + sim.yaw + sim.pitch + sim.roll + sim.thrust))) {   // NaN保険
     pos.set((room.min.x + room.max.x) / 2, sim.groundY || 0, (room.min.z + room.max.z) / 2); vel.set(0, 0, 0);
     sim.yaw = sim.pitch = sim.roll = sim.yawRate = 0; sim.thrust = sim.thrustCmd = C.G; sim.state = ST_LANDED;
+    if (world.vr) vrPlaceAtHome();
     return;
   }
   if (st === ST_TAKEOFF && pos.y >= sim.takeY - 0.06) { sim.state = ST_FLYING; sim.holdY = false; }
@@ -793,7 +827,7 @@ function toggleFlight() {
   autoTakeoffDone = true;
   if (sim.state === ST_LANDED) {
     sim.state = ST_TAKEOFF; sim.spool = 0;
-    sim.takeY = Math.min(sim.groundY + C.TAKEOFF_ALT, room.max.y - 0.3);
+    sim.takeY = Math.min(sim.groundY + P.TAKEOFF_ALT, world.vr ? C.VR_CEIL - 2 : room.max.y - 0.3);
     auto.phase = 1; auto.until = sim.t + 1.0; auto.speed = 0;
   } else if (sim.state === ST_LANDING) sim.state = ST_FLYING;
   else sim.state = ST_LANDING;
@@ -815,8 +849,10 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.02, 50);
-scene.add(camera);
-scene.add(new THREE.HemisphereLight(0xdfe9ff, 0x4a4036, 1.1));
+// リグ (ダリー): カメラとコントローラーの親。three は XR の姿勢にカメラの親の matrixWorld を掛ける (WebXRManager.updateCamera の updateCamera(cameraXR, parent))。
+// MR では常に恒等 (位置0・回転なし・スケール1)。VR でだけユーザーの視点を動かすために使う。
+const rig = new THREE.Group(); rig.name = 'xrRig'; scene.add(rig); rig.add(camera);
+const hemi = new THREE.HemisphereLight(0xdfe9ff, 0x4a4036, 1.1); scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 1.6); sun.position.set(1.5, 3, 1); scene.add(sun);
 
 const drone = createDrone(); scene.add(drone);
@@ -851,7 +887,7 @@ const hudTex = new THREE.CanvasTexture(hudCv); hudTex.colorSpace = THREE.SRGBCol
 const hudMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.12), new THREE.MeshBasicMaterial({ map: hudTex, transparent: true, depthTest: false }));
 hudMesh.renderOrder = 999;
 const HUD_GRIP_Y = 0.07, HUD_GRIP_RX = -Math.PI / 2 + 0.5;   // 左グリップ上のHUD位置/傾き (モニターも同じ平面を使う)
-const hud = { acc: 0, alt: -1, spd: -1, mode: -1, state: -1, noPlane: null, ctrl: null, on: null, leftGrip: null, hudInit: false, nsig: '' };
+const hud = { acc: 0, alt: -1, spd: -1, mode: -1, state: -1, noPlane: null, ctrl: null, on: null, leftGrip: null, hudInit: false, nsig: '', wl: '', hold: 0 };
 
 /** 幅に収まるまでフォントを縮めて描く */
 function fitText(x, text, px, py, maxW, size, minSize, bold) {
@@ -872,26 +908,37 @@ function wrapText(x, text, px, py, maxW, lineH, maxLines) {
 }
 const trunc = (str, n) => { const a = Array.from(str); return a.length > n ? a.slice(0, n - 1).join('') + '…' : str; };   // コードポイント単位 (絵文字などのサロゲートペアを割らない)
 
-/** ルーム参加中のHUD下半分 (y=100〜)。ネット行1本 + 状態行 + 操作ヒント + 警告行。位置合わせ中はヒントを手順表示に置き換える。 */
+/** 世界/視点の表示名 (HUD右上のバッジ) */
+function worldLabel() { return world.vr ? (world.cam === 0 ? 'VR・一人称' : 'VR・三人称') : 'MR'; }
+/** 右スティック長押しの進捗 (HUD最下行) */
+function drawHoldBar(x, y, W) {
+  const s = vrHold.step;
+  x.fillStyle = '#ffee66'; fitText(x, (world.vr ? 'MRへ戻ります　' : 'VRへ移動します　') + '■'.repeat(s) + '□'.repeat(5 - s), 18, y, W, 19, 12, true);
+}
+
+/** ルーム参加中のHUD下半分 (y=98〜)。ネット行1本 + 状態行 + 操作ヒント3行 + 警告行 + 最下行。位置合わせ中はヒントを手順表示に置き換える。 */
 function drawHudNet(x, ctrl, noPlane) {
   const now = performance.now(), W = 476;
   x.textBaseline = 'top';
   const ready = net.status === 'ready';
   const kindTxt = ['未', '自動', '手動'][align.kind];
   let line = (ready ? (net.slot + 1) + '番 ' : '') + '「' + trunc(net.room, 8) + '」';
-  if (net.role === 'pilot') line += ready ? '  接続' + net.nConn + (net.nSpec ? '+観戦' + net.nSpec : '') + '  位置合わせ:' + kindTxt : '  接続中…';
+  if (net.role === 'pilot') line += ready ? '  接続' + net.nConn + (net.nSpec ? '+観戦' + net.nSpec : '') + (world.vr ? '  VR' : '  位置合わせ:' + kindTxt + (align.kind === 0 ? (SHARED_DIAG_TXT[sharedSp.diag] ? '・' + SHARED_DIAG_TXT[sharedSp.diag] : '') + '・Yで手動' : '')) : '  接続中…';   // 「未」の時は共有スペースの試行結果 (なぜ自動で合わないか) と手動の案内を添える
   const sw = ready && net.slot >= 0;
-  if (sw) { x.fillStyle = hex6(PALETTE[net.slot % PALETTE.length]); x.fillRect(18, 103, 20, 20); x.strokeStyle = '#ffffffcc'; x.lineWidth = 2; x.strokeRect(18, 103, 20, 20); }
-  x.fillStyle = '#ffffff'; fitText(x, line, sw ? 46 : 18, 102, sw ? W - 28 : W, 20, 13, true);
+  if (sw) { x.fillStyle = hex6(PALETTE[net.slot % PALETTE.length]); x.fillRect(18, 99, 20, 20); x.strokeStyle = '#ffffffcc'; x.lineWidth = 2; x.strokeRect(18, 99, 20, 20); }
+  const unal = ready && net.role === 'pilot' && !world.vr && align.kind === 0;   // 「未」の行は診断と案内が付いて長い: 空白を詰め、最小の字を少し小さくして必ず収める
+  if (unal) line = line.replace(/ {2}/g, ' ');
+  x.fillStyle = '#ffffff'; fitText(x, line, sw ? 46 : 18, 98, sw ? W - 28 : W, 20, unal ? 11 : 13, true);
   // 状態行 (通知 > 再接続中 > 自分の位置合わせの状態)
   const ntc = net.notice && now < net.noticeUntil ? net.notice : '';
   let st = '', stCol = '#ffd479';
   if (ntc) st = ntc;
   else if (net.status === 'reconnecting') st = 'ルームサーバー切断：再接続中…（接続済みの相手とは継続）';
-  else if (ready && align.kind === 0 && net.role === 'pilot') { st = sharedSp.space ? '共有スペース取得中…　合わなければYで手動の位置合わせ' : 'Yボタンで位置合わせ（全員が同じ2点を同じ順で）'; stCol = '#b8c6d6'; }
+  else if (ready && world.vr && net.role === 'pilot') { st = 'VRワールド：位置合わせは不要です'; stCol = '#8dffd8'; }
+  else if (ready && align.kind === 0 && net.role === 'pilot') { st = sharedSp.diag === 'wait' ? '共有スペース待機中…　合わなければYで手動の位置合わせ' : 'Yボタンで位置合わせ（全員が同じ2点を同じ順で）'; stCol = '#b8c6d6'; }
   else if (ready && align.kind === 2) { st = '位置合わせ：手動（2点間 ' + cal.manual.d.toFixed(2) + ' m）'; stCol = '#8dffd8'; }
   else if (ready && align.kind === 1) { st = '位置合わせ：自動（共有スペース）'; stCol = '#8dffd8'; }
-  x.fillStyle = stCol; fitText(x, st, 18, 128, W, 18, 12, false);
+  x.fillStyle = stCol; fitText(x, st, 18, 122, W, 18, 12, false);
   if (cal.active) {
     x.fillStyle = '#ffee66'; x.font = 'bold 19px sans-serif';
     const n = wrapText(x, calStepText(), 18, 154, W, 24, 2);
@@ -902,23 +949,33 @@ function drawHudNet(x, ctrl, noPlane) {
   } else {
     x.fillStyle = '#b8c6d6';
     if (ctrl) {
-      fitText(x, 'A=自動/手動  B=離着陸  X=HUD  Y=位置合わせ' + (align.kind === 2 ? '(長押し=解除)' : ''), 18, 154, W, 17, 12, false);
-      fitText(x, '右トリガー長押し=呼び戻し  左トリガー=ドローン視点', 18, 177, W, 17, 12, false);
+      if (world.vr) {
+        fitText(x, 'A=自動/手動  B=離着陸  X=HUD', 18, 146, W, 17, 12, false);
+        fitText(x, '右トリガー長押し=パッドへ帰還', 18, 166, W, 17, 12, false);
+        fitText(x, '右スティック長押し=MR/VR　左スティック押込み=視点（VR）', 18, 186, W, 17, 11, false);
+      } else {
+        fitText(x, 'A=自動/手動  B=離着陸  X=HUD  Y=位置合わせ' + (align.kind === 2 ? '(長押し=解除)' : ''), 18, 146, W, 17, 12, false);
+        fitText(x, '右トリガー長押し=呼び戻し  左トリガー=ドローン視点', 18, 166, W, 17, 12, false);
+        fitText(x, '右スティック長押し=MR/VR　左スティック押込み=視点（VR）', 18, 186, W, 17, 11, false);
+      }
     } else {
-      fitText(x, 'コントローラー未検出: 自動モード（位置合わせ不可）', 18, 154, W, 17, 12, false);
-      fitText(x, 'ピンチ(選択)で離陸/着陸', 18, 177, W, 17, 12, false);
+      fitText(x, world.vr ? 'コントローラー未検出: 自動モード' : 'コントローラー未検出: 自動モード（位置合わせ不可）', 18, 146, W, 17, 12, false);
+      fitText(x, 'ピンチ(選択)で離陸/着陸', 18, 166, W, 17, 12, false);
     }
-    // 警告行: 他のパイロットが見えていない理由を具体的に (方式違い > 共有スペース確立待ち > 相手が未調整 > 2点の食い違いの疑い)
+    // 警告行: 他のパイロットが見えていない理由を具体的に (方式違い > 共有スペース確立待ち > 相手が未調整 > 2点の食い違いの疑い)。別ワールドの機体数も。VRでは位置合わせの警告は出さない。
     let warn = '';
     if (ready && net.role === 'pilot') {
-      if (net.nOther > 0) warn = align.kind === 2 ? '方式違い: 「自動」の' + net.nOther + '台と互いに非表示（Y長押しで手動を解除）' : '方式違い: 「手動」の' + net.nOther + '台と互いに非表示（Yで手動に合わせる）';
+      if (world.vr) { /* VR同士は位置合わせ不要 */ }
+      else if (net.nOther > 0) warn = align.kind === 2 ? '方式違い: 「自動」の' + net.nOther + '台と互いに非表示（Y長押しで手動を解除）' : '方式違い: 「手動」の' + net.nOther + '台と互いに非表示（Yで手動に合わせる）';
       else if (net.nWait > 0) warn = '共有スペース確立待ち: ' + net.nWait + '台（合わなければ全員Yで手動）';
       else if (net.nNone > 0) warn = '位置合わせ待ち: ' + net.nNone + '台（相手側の位置合わせが未完了）';
       else if (net.nDiff > 0) warn = '注意: ' + net.nDiff + '台と2点間の距離が違います（やり直し推奨）';
+      if (net.nWorld > 0) warn = (warn ? warn + '　' : '') + '別ワールド ' + net.nWorld + '台';
     }
-    if (warn) { x.fillStyle = '#ffd479'; fitText(x, warn, 18, 202, W, 18, 12, true); }
-    if (cal.msg && now < cal.msgUntil) { x.fillStyle = '#ff9a7a'; fitText(x, cal.msg, 18, 226, W, 18, 12, true); }
-    else if (noPlane) { x.fillStyle = '#ffd479'; fitText(x, '壁未認識: 左スティック押込みで設定', 18, 226, W, 17, 12, false); }
+    if (warn) { x.fillStyle = '#ffd479'; fitText(x, warn, 18, 208, W, 18, 12, true); }
+    if (vrHold.step > 0) drawHoldBar(x, 230, W);
+    else if (cal.msg && now < cal.msgUntil) { x.fillStyle = '#ff9a7a'; fitText(x, cal.msg, 18, 230, W, 18, 12, true); }
+    else if (noPlane) { x.fillStyle = '#ffd479'; fitText(x, '壁未認識: 左スティック押込みで設定', 18, 230, W, 17, 12, false); }
   }
 }
 
@@ -927,39 +984,46 @@ function drawHud(alt, spd, noPlane, ctrl) {
   x.clearRect(0, 0, 512, 256);
   x.fillStyle = 'rgba(10,16,24,0.8)';
   x.beginPath(); if (x.roundRect) x.roundRect(4, 4, 504, 248, 22); else x.rect(4, 4, 504, 248); x.fill();
-  x.strokeStyle = 'rgba(56,211,159,0.8)'; x.lineWidth = 3; x.stroke();
+  x.strokeStyle = world.vr ? 'rgba(90,150,235,0.9)' : 'rgba(56,211,159,0.8)'; x.lineWidth = 3; x.stroke();
   x.textBaseline = 'top';
-  x.fillStyle = '#38d39f'; x.font = 'bold 34px sans-serif';
-  x.fillText('モード: ' + MODE_NAMES[sim.mode] + '  /  ' + STATE_NAMES[sim.state], 18, 14);
-  x.fillStyle = '#ffffff'; x.font = 'bold 32px sans-serif';
-  x.fillText('高度 ' + (alt / 100).toFixed(2) + ' m   速度 ' + (spd / 10).toFixed(1) + ' m/s', 18, 62);
+  // 右上のバッジ: いまの世界/視点 (MR / VR・一人称 / VR・三人称)
+  const wl = worldLabel(); x.font = 'bold 22px sans-serif';
+  const bw = Math.ceil(x.measureText(wl).width) + 20;
+  x.fillStyle = world.vr ? 'rgba(58,123,213,0.95)' : 'rgba(56,211,159,0.25)';
+  x.beginPath(); if (x.roundRect) x.roundRect(496 - bw, 12, bw, 32, 10); else x.rect(496 - bw, 12, bw, 32); x.fill();
+  x.fillStyle = world.vr ? '#ffffff' : '#8dffd8'; x.fillText(wl, 496 - bw + 10, 16);
+  x.fillStyle = '#38d39f'; fitText(x, 'モード: ' + MODE_NAMES[sim.mode] + '  /  ' + STATE_NAMES[sim.state], 18, 13, 470 - bw, 30, 16, true);
+  x.fillStyle = '#ffffff'; fitText(x, '高度 ' + (alt / 100).toFixed(2) + ' m   速度 ' + (spd / 10).toFixed(1) + ' m/s', 18, 54, 476, 30, 16, true);
   x.fillStyle = '#b8c6d6'; x.font = '20px sans-serif';
-  if (net.on) { try { drawHudNet(x, ctrl, noPlane); } catch (e) { /* HUDの下半分が欠けるだけ */ } hudTex.needsUpdate = true; return; }   // ルーム参加中は専用レイアウト (ソロの描画は下のまま不変)
+  if (net.on) { try { drawHudNet(x, ctrl, noPlane); } catch (e) { /* HUDの下半分が欠けるだけ */ } hudTex.needsUpdate = true; return; }   // ルーム参加中は専用レイアウト
   if (ctrl) {
-    x.fillText('左: 上下=昇降 / 左右=旋回', 18, 104);
-    x.fillText('右: 前後=前進後退 / 左右=横移動', 18, 128);
-    x.fillText('A=自動/手動  B=離着陸  X=HUD', 18, 152);
-    x.fillText('右トリガー長押し=手元へ呼び戻し', 18, 176);
-    x.fillText('左トリガー=ドローン視点', 18, 200);
+    // 凡例は世界ごとに切り替えて行数を抑える (左スティック押込みは MR=スペース設定 / VR=視点)
+    fitText(x, '左: 上下=昇降 左右=旋回　右: 前後左右=移動', 18, 94, 476, 19, 12, false);
+    fitText(x, 'A=自動/手動  B=離着陸  X=HUD', 18, 118, 476, 19, 12, false);
+    fitText(x, world.vr ? '右トリガー長押し=パッドへ帰還' : '右トリガー長押し=呼び戻し　左トリガー=ドローン視点', 18, 142, 476, 19, 12, false);
+    fitText(x, '右スティック長押し=MR/VR', 18, 166, 476, 19, 12, false);
+    fitText(x, world.vr ? '左スティック押込み=視点（一人称/三人称）' : '左スティック押込み=視点（VR）', 18, 190, 476, 19, 12, false);
   } else {
-    x.fillText('コントローラー未検出: 自動モード', 18, 112);
-    x.fillText('ピンチ(選択)で離陸/着陸', 18, 138);
+    x.fillText('コントローラー未検出: 自動モード', 18, 100);
+    x.fillText('ピンチ(選択)で離陸/着陸', 18, 128);
   }
   const ntc = net.notice && performance.now() < net.noticeUntil ? net.notice : '';    // ネットワーク機能が使えなかった時の短い通知 (ソロで飛行は継続)
-  if (ntc) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText(ntc, 18, 226); }
+  if (vrHold.step > 0) drawHoldBar(x, 224, 476);
+  else if (ntc) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText(ntc, 18, 226); }
   else if (noPlane) { x.fillStyle = '#ffd479'; fitText(x, '壁未認識: 左スティック押込みで設定', 18, 226, 476, 19, 12, false); }
   hudTex.needsUpdate = true;
 }
 
 function updateHud(dt) {
   hud.acc += dt;
-  if (hud.acc < 1 / C.HUD_HZ) return;
+  if (hud.acc < 1 / C.HUD_HZ && vrHold.step === hud.hold) return;     // 長押しの進捗だけは即時に描き直す
   hud.acc = 0;
   const alt = Math.round((pos.y - sim.groundY) * 100), spd = Math.round(vel.length() * 10);
-  const noPlane = renderer.xr.isPresenting && planes.length === 0, ctrl = input.hasController;
+  const noPlane = renderer.xr.isPresenting && planes.length === 0 && !world.vr, ctrl = input.hasController;
+  const wl = worldLabel();
   const nsig = net.on || net.notice ? netHudSig() : '';       // ソロでは常に '' (描画判定に影響しない)
-  if (!hud.hudInit || alt !== hud.alt || spd !== hud.spd || sim.mode !== hud.mode || sim.state !== hud.state || noPlane !== hud.noPlane || ctrl !== hud.ctrl || nsig !== hud.nsig) {
-    hud.hudInit = true; hud.alt = alt; hud.spd = spd; hud.mode = sim.mode; hud.state = sim.state; hud.noPlane = noPlane; hud.ctrl = ctrl; hud.nsig = nsig;
+  if (!hud.hudInit || alt !== hud.alt || spd !== hud.spd || sim.mode !== hud.mode || sim.state !== hud.state || noPlane !== hud.noPlane || ctrl !== hud.ctrl || nsig !== hud.nsig || wl !== hud.wl || vrHold.step !== hud.hold) {
+    hud.wl = wl; hud.hold = vrHold.step; hud.hudInit = true; hud.alt = alt; hud.spd = spd; hud.mode = sim.mode; hud.state = sim.state; hud.noPlane = noPlane; hud.ctrl = ctrl; hud.nsig = nsig;
     drawHud(alt, spd, noPlane, ctrl);
   }
 }
@@ -975,14 +1039,15 @@ function placeHud() {
     hudMesh.scale.setScalar(sc);
     hudMesh.position.set(-hw + 0.12 * sc + 0.02, -hh + 0.06 * sc + 0.02, -d);
   }
-  else if (hud.leftGrip) { hud.leftGrip.add(hudMesh); hudMesh.position.set(0, HUD_GRIP_Y, 0.0); hudMesh.rotation.x = HUD_GRIP_RX; }
-  else scene.add(hudMesh);
+  else if (hud.leftGrip) { hud.leftGrip.add(hudMesh); hudMesh.position.set(0, HUD_GRIP_Y, 0.0); hudMesh.rotation.x = HUD_GRIP_RX; }   // グリップは rig の子 → VR では HUD も視点と一緒に動く
+  else (world.vr ? rig : scene).add(hudMesh);               // ハンドトラッキングの浮遊HUD (ローカル座標で置くのでVRでは rig の子)
   placeMonitor();
 }
 function updateHudFloat() {
   if (renderer.xr.isPresenting && !hud.leftGrip && head.valid) {
     hudMesh.position.copy(head.pos).addScaledVector(head.fwd, 0.6); hudMesh.position.y -= 0.22;
-    hudMesh.lookAt(head.pos);
+    if (world.vr) { tmpM.lookAt(head.pos, hudMesh.position, Y_AXIS); hudMesh.quaternion.setFromRotationMatrix(tmpM); }   // rig の子: ローカル座標のまま向ける (lookAt はワールド座標を取る)
+    else hudMesh.lookAt(head.pos);
     // モニターはHUDの左隣 (HUDが非表示でも同じ位置)
     monMesh.quaternion.copy(hudMesh.quaternion);
     tmpV.set(-(0.12 + MON_GAP + MON_BZ.l + C.MON_W / 2), 0, 0).applyQuaternion(hudMesh.quaternion);
@@ -992,7 +1057,8 @@ function updateHudFloat() {
 
 // コントローラーグリップ (左手を検出してHUDを取り付け)
 for (let i = 0; i < 2; i++) {
-  const grip = renderer.xr.getControllerGrip(i); scene.add(grip);
+  const grip = renderer.xr.getControllerGrip(i); rig.add(grip);          // グリップ/ターゲットレイは rig の子 (VRで視点と一緒に動く。MRでは rig=恒等なので従来どおり)
+  rig.add(renderer.xr.getController(i));
   grip.addEventListener('connected', (e) => { if (e.data && e.data.handedness === 'left' && e.data.gamepad && !e.data.hand) { hud.leftGrip = grip; placeHud(); } });   // 手(ハンドトラッキング)には付けない
   grip.addEventListener('disconnected', () => { if (hud.leftGrip === grip) { hud.leftGrip = null; placeHud(); } });
 }
@@ -1070,7 +1136,7 @@ function placeMonitor() {
     monMesh.rotation.x = HUD_GRIP_RX;
     monMesh.position.set(0, 0.06 + MON_GAP + MON_BZ.b + MON_H / 2, 0).applyEuler(monMesh.rotation);
     monMesh.position.y += HUD_GRIP_Y;
-  } else scene.add(monMesh);                                 // 浮遊HUDの隣 (位置は updateHudFloat が毎フレーム更新)
+  } else (world.vr ? rig : scene).add(monMesh);              // 浮遊HUDの隣 (位置は updateHudFloat が毎フレーム更新)
 }
 
 // --- 部屋モデル (layer 3) ---
@@ -1310,6 +1376,7 @@ function initAudio() {
 }
 
 function stopAudio() {
+  windStop();                                               // VRの風 (ctx を閉じる前にフェードアウト)
   remoteAudioStop();                                        // 他機の音も (ルーム参加時のみ存在)
   const ctx = audio.ctx, master = audio.master;
   audio.ctx = null; audio.oscs.length = 0; audio.master = null;
@@ -1345,7 +1412,773 @@ function updateAudio(avgRpm, now, lpos, lquat) {
 }
 
 /* =====================================================================
- * 14. 入力 (XRコントローラー / キーボード)
+ * 14. VRネイチャーワールド (MRと切替)
+ *   同じ immersive-ar セッションのまま、不透明な空と地形でパススルーを完全に覆う (セッションは作り直さない)。
+ *   ・世界は固定シードの手続き生成で全端末同一 (マルチプレイの前提)。生成には 整数ハッシュ と 四則演算・sqrt だけを使う
+ *     (sin/exp/pow は実装差で最下位ビットがずれうるため、地形・樹木配置には使わない)。
+ *   ・ユーザーの視点は rig (カメラ + コントローラーの親) を動かして移す。MRでは rig は常に恒等 (applyWorld(false) が厳密に恒等へ戻す)。
+ *   ・深度オクルージョンはVR中は無効: 実壁の深度で風景に穴が開くため。three r170 は render() の中で xr.getDepthSensingMesh() を
+ *     描画リストの先頭へ入れる (WebGLRenderer.js: `const depthSensingMesh = _this.xr.getDepthSensingMesh()`)。
+ *     VR中はこの関数を null を返すものへ差し替え、MRへ戻る時に three 本来の関数へ戻す (applyDepthMeshMode)。
+ *   ・空は不透明 (depthWrite=false, 最初に描画, 常にカメラに追従, 遠方クリップに掛からない) なのでパススルーに透け穴ができない。
+ *   ・物理パラメータは可変の P を切り替えて使い分ける (C は凍結のまま)。MR の値は従来と同一。
+ * ===================================================================== */
+const vrw = {
+  built: false, compiled: false, group: null, terrain: null, water: null, sky: null, clouds: null, fog: null,
+  heights: null, pads: null, tn: 0, nx: 0, ny: 1, nz: 0,
+  nTree: 0, tx: null, tz: null, ty: null, th: null, tr: null, tk: null, cellStart: null, cellIdx: null, gridN: 0,
+  contacts: 0, treeHits: 0, buildMs: 0, compileMs: 0, errN: 0, stats: null, avoidY: 0, tick: 0,
+};
+const VR_CELL = 16;                                          // 樹木の空間グリッド [m]
+const VR_SUN = new THREE.Vector3(-0.42, 0.58, -0.70).normalize();
+const mrLight = { hi: hemi.intensity, hc: hemi.color.clone(), hg: hemi.groundColor.clone(), si: sun.intensity, sc: sun.color.clone(), sp: sun.position.clone() };   // MRの照明 (applyWorld(false) で復元)
+const mrCam = { near: camera.near, far: camera.far };
+const mrSave = { ok: false, x: 0, y: 0, z: 0, yaw: 0, monOn: false };
+const eyeW = new THREE.Vector3(), eyeQ = new THREE.Quaternion();   // VR中の目の実世界(VR座標)位置・向き (音・送信・スプライト用)
+let frameDt = 1 / 60;
+
+/* ---- 決定的ノイズ ---- */
+function vrHash(ix, iz, seed) {
+  let h = (Math.imul(ix | 0, 374761393) ^ Math.imul(iz | 0, 668265263) ^ Math.imul(seed | 0, 1442695041)) | 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16; h = Math.imul(h, 2246822519); h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
+}
+function vrNoise(x, z, seed) {
+  const ix = Math.floor(x), iz = Math.floor(z), fx = x - ix, fz = z - iz;
+  const u = fx * fx * (3 - 2 * fx), v = fz * fz * (3 - 2 * fz);
+  const a = vrHash(ix, iz, seed), b = vrHash(ix + 1, iz, seed), c = vrHash(ix, iz + 1, seed), d = vrHash(ix + 1, iz + 1, seed);
+  return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+}
+function vrFbm(x, z, oct, seed) {                            // 0..1
+  let s = 0, a = 0.5, n = 0;
+  for (let i = 0; i < oct; i++) { s += a * vrNoise(x, z, seed + i * 17); n += a; x = x * 2 + 31.7; z = z * 2 + 17.3; a *= 0.5; }
+  return s / n;
+}
+function vrRng(seed) {                                       // mulberry32
+  let a = seed | 0;
+  return () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+}
+
+/** 地形の元の高さ関数 (格子点でのみ評価する)。中央は半径 VR_MEADOW_R まで厳密に平ら (高さ0)、外へ向かって起伏、縁は山並み、左奥(-X,-Z)に湖の盆地。 */
+function vrRawHeight(x, z) {
+  const half = C.VR_SIZE / 2, r = Math.sqrt(x * x + z * z);
+  const e = Math.max(Math.abs(x), Math.abs(z)) / half;                         // 0 (中心) .. 1 (縁)
+  const mount = smoothstep(e + (vrFbm(x / 90, z / 90, 3, 11) - 0.5) * 0.30, 0.50, 0.90);
+  const peaks = 26 + 32 * vrFbm(x / 60 + 5, z / 60 - 9, 3, 23);                // 26..58
+  const roll = (vrFbm(x / 120, z / 120, 4, 5) - 0.5) * 2;                      // -1..1 ゆるやかな丘
+  const detail = (vrFbm(x / 26, z / 26, 2, 41) - 0.5) * 2;
+  const meadow = smoothstep(r, C.VR_MEADOW_R, 62);                             // 0=平らな離陸場 → 1
+  const lx = x + 85, lz = z + 140, q = (lx * lx + lz * lz) / (44 * 44), basin = 1 / ((1 + q) * (1 + q));
+  const hills = (roll * 13 * (1 - 0.55 * mount) + detail * 1.5 + 5) * meadow;
+  return hills + mount * peaks * meadow - 17 * basin * meadow;
+}
+
+/** 地形の高さ。描画メッシュと同じ三角形分割 (交互対角) の上で線形補間する (= 見えている面そのもの)。確保なし。
+ *  同時に法線を vrw.nx/ny/nz へ入れる。範囲外は縁の値。 */
+function terrainAt(x, z) {
+  const N = C.VR_GRID, W = N + 1, H = vrw.heights, half = C.VR_SIZE / 2, inv = N / C.VR_SIZE, cs = C.VR_SIZE / N;
+  let gx = (x + half) * inv, gz = (z + half) * inv;
+  if (gx < 0) gx = 0; else if (gx > N - 1e-6) gx = N - 1e-6;
+  if (gz < 0) gz = 0; else if (gz > N - 1e-6) gz = N - 1e-6;
+  const ix = gx | 0, iz = gz | 0, fx = gx - ix, fz = gz - iz, i0 = iz * W + ix;
+  const ha = H[i0], hb = H[i0 + 1], hc = H[i0 + W], hd = H[i0 + W + 1];
+  let h, sx, sz;
+  if (((ix + iz) & 1) === 0) {                                // 対角 a-d
+    if (fx >= fz) { h = ha + (hb - ha) * fx + (hd - hb) * fz; sx = hb - ha; sz = hd - hb; }
+    else { h = ha + (hd - hc) * fx + (hc - ha) * fz; sx = hd - hc; sz = hc - ha; }
+  } else {                                                    // 対角 b-c
+    if (fx + fz <= 1) { h = ha + (hb - ha) * fx + (hc - ha) * fz; sx = hb - ha; sz = hc - ha; }
+    else { h = hd + (hc - hd) * (1 - fx) + (hb - hd) * (1 - fz); sx = hd - hc; sz = hd - hb; }
+  }
+  const gxs = sx / cs, gzs = sz / cs, il = 1 / Math.sqrt(gxs * gxs + 1 + gzs * gzs);
+  vrw.nx = -gxs * il; vrw.ny = il; vrw.nz = -gzs * il;
+  return h;
+}
+function terrainHeight(x, z) { return terrainAt(x, z); }
+/** 水面を床とみなした地面の高さ (水に「着水」できる)。法線は vrw.n*。 */
+function vrGround(x, z) {
+  const h = terrainAt(x, z);
+  if (h < C.VR_WATER_Y) { vrw.nx = 0; vrw.ny = 1; vrw.nz = 0; return C.VR_WATER_Y; }
+  if (x * x + z * z < VR_PAD_ZONE2) {                         // 離着陸パッドの上面 (パッドは平らな離陸場の中だけ。外ではこの判定に入らない)
+    const pd = vrw.pads;
+    for (let i = 0; i < pd.length; i += 2) { const dx = x - pd[i], dz = z - pd[i + 1]; if (dx * dx + dz * dz < VR_PAD_RAD * VR_PAD_RAD) return h + VR_PAD_TOP; }
+  }
+  return h;
+}
+/** 機体の接地面(スキッド幅)を考慮した地面: 中心+周囲4点の最大。最後に中心を引くので法線は中心のもの。 */
+function vrGroundMax(x, z) {
+  const R = 0.15;
+  let g = vrGround(x + R, z); let v;
+  v = vrGround(x - R, z); if (v > g) g = v;
+  v = vrGround(x, z + R); if (v > g) g = v;
+  v = vrGround(x, z - R); if (v > g) g = v;
+  v = vrGround(x, z); if (v > g) g = v;
+  return g;
+}
+
+/** スロットごとの離着陸パッド位置 (円周上。8機ごとに外側の輪)。 */
+const VR_PAD_RAD = 1.25, VR_PAD_TOP = 0.065;                 // パッドの半径 / 上面 (標示の上端) の高さ [m]。機体はパッドに埋もれず、この上面に着陸する
+const VR_PAD_ZONE2 = (C.VR_PAD_R * Math.ceil(C.NET_SLOTS / 8) + VR_PAD_RAD + 0.5) * (C.VR_PAD_R * Math.ceil(C.NET_SLOTS / 8) + VR_PAD_RAD + 0.5);   // パッドが存在しうる範囲 (中心からの距離の2乗)
+const VR_SIN16 = [0, 0.3826834323650898, 0.7071067811865476, 0.9238795325112867, 1, 0.9238795325112867, 0.7071067811865476, 0.3826834323650898,
+  0, -0.3826834323650898, -0.7071067811865476, -0.9238795325112867, -1, -0.9238795325112867, -0.7071067811865476, -0.3826834323650898];   // sin(k*π/8)。定数表 (Math.sin/cos は実装ごとに最下位ビットが違いうるので使わない → 全端末でパッド位置がビット一致)
+function vrHomeFor(slot, out) {
+  const s = slot < 0 ? 0 : slot, ring = Math.floor(s / 8), k = ((s % 8) * 2 + ring) & 15, rad = C.VR_PAD_R * (1 + ring);   // 角度 = k*π/8
+  return out.set(rad * VR_SIN16[k], 0, -rad * VR_SIN16[(k + 4) & 15]);
+}
+
+/* ---- 世界の生成 ---- */
+function vrPaint(geo, hex, vary, grad) {                     // 頂点カラー (非インデックスは面ごと)。vary: 面ごとの明暗の振れ, grad: 高さ方向の陰影
+  const col = new THREE.Color(hex), p = geo.attributes.position, n = p.count, k = new Float32Array(n * 3);
+  let y0 = 1e9, y1 = -1e9;
+  for (let i = 0; i < n; i++) { const y = p.getY(i); if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  const face = !geo.index;
+  for (let i = 0; i < n; i++) {
+    const f = face ? (i / 3) | 0 : i;
+    const b = 1 + (vary ? (vrHash(f, 7, 3) - 0.5) * 2 * vary : 0) * 1, g = grad ? (1 - grad) + grad * (p.getY(i) - y0) / Math.max(1e-6, y1 - y0) : 1;
+    k[i * 3] = col.r * b * g; k[i * 3 + 1] = col.g * b * g; k[i * 3 + 2] = col.b * b * g;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(k, 3)); geo.deleteAttribute('uv');
+  return geo;
+}
+const vrAt = (geo, x, y, z, sx, sy, sz) => { if (sx !== undefined) geo.scale(sx, sy, sz); return geo.translate(x, y, z); };
+
+function vrConiferGeo() {
+  const parts = [vrAt(new THREE.CylinderGeometry(0.07, 0.09, 0.28, 6, 1, true), 0, 0.14, 0)];
+  parts[0] = vrPaint(parts[0], 0x5b4230, 0.06);
+  const cones = [[0.10, 0.50, 1.0, 0x2c6a37, false], [0.36, 0.44, 0.74, 0x32763f, true], [0.58, 0.42, 0.48, 0x3a8446, true]];
+  for (const [y0, h, r, hex, open] of cones) parts.push(vrPaint(vrAt(new THREE.ConeGeometry(r, h, 8, 1, open), 0, y0 + h / 2, 0), hex, 0.07, 0.22));
+  return mergeGeos(parts);
+}
+function vrBroadGeo() {
+  const trunk = vrPaint(vrAt(new THREE.CylinderGeometry(0.06, 0.09, 0.5, 6, 1, true), 0, 0.25, 0), 0x6b4a30, 0.06);
+  const blob = vrPaint(vrAt(new THREE.IcosahedronGeometry(1, 1), 0, 0.66, 0, 1, 0.36, 1), 0x62a647, 0.10, 0.35);
+  return mergeGeos([trunk, blob]);
+}
+function vrRockGeo() {
+  const g = new THREE.IcosahedronGeometry(1, 0), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) { const k = 0.8 + 0.35 * vrHash((p.getX(i) * 1000) | 0, (p.getZ(i) * 1000) | 0, 5); p.setXYZ(i, p.getX(i) * k, p.getY(i) * k * 0.8, p.getZ(i) * k); }
+  g.computeVertexNormals();
+  return mergeGeos([vrPaint(g, 0x8b8a84, 0.12, 0.25)]);
+}
+function vrPadGeo() {                                        // 上面は 円(暗)・輪(白)・外周(暗) を同じ高さに隙間なく並べる (重なる面が無い → Zファイトしない)。H はその上の薄い板。全体の上端 = VR_PAD_TOP
+  const R = VR_PAD_RAD, y = 0.05, flat = (g) => vrAt(g.rotateX(-Math.PI / 2), 0, y, 0);
+  const parts = [vrPaint(vrAt(new THREE.CylinderGeometry(R, R, y, 24, 1, true), 0, y / 2, 0), 0x40454c, 0),
+    vrPaint(flat(new THREE.CircleGeometry(0.98, 24)), 0x40454c, 0), vrPaint(flat(new THREE.RingGeometry(0.98, 1.12, 24)), 0xf2f2f2, 0), vrPaint(flat(new THREE.RingGeometry(1.12, R, 24)), 0x40454c, 0)];
+  const hh = VR_PAD_TOP - 0.001 - y;                           // H の板の厚み (上端は機体のスキッドのすぐ下)
+  for (const [bx, bz, sx, sz] of [[-0.36, 0, 0.12, 0.8], [0.36, 0, 0.12, 0.8], [0, 0, 0.6, 0.12]]) parts.push(vrPaint(vrAt(new THREE.BoxGeometry(sx, hh, sz), bx, y + hh / 2, bz), 0xf2f2f2, 0));
+  return mergeGeos(parts);
+}
+
+function vrBuildSky() {
+  const mat = new THREE.ShaderMaterial({
+    uniforms: { uHorizon: { value: new THREE.Color(0xcfe3ef) }, uZenith: { value: new THREE.Color(0x3f86d6) }, uGround: { value: new THREE.Color(0xa9c0bd) }, uSunDir: { value: VR_SUN.clone() }, uSunCol: { value: new THREE.Color(0xfff2d2) } },
+    vertexShader: 'varying vec3 vDir;\nvoid main() {\n  vDir = position;\n  vec4 c = projectionMatrix * modelViewMatrix * vec4( position * 400.0, 1.0 );\n  gl_Position = vec4( c.xy, c.w * 0.99999, c.w );\n}',
+    fragmentShader: '#include <common>\n#include <dithering_pars_fragment>\nuniform vec3 uHorizon; uniform vec3 uZenith; uniform vec3 uGround; uniform vec3 uSunDir; uniform vec3 uSunCol; varying vec3 vDir;\n'
+      + 'void main() {\n  vec3 d = normalize( vDir ); float e = d.y;\n'
+      + '  vec3 col = mix( uHorizon, uZenith, pow( clamp( e, 0.0, 1.0 ), 0.5 ) );\n'
+      + '  col = mix( col, uHorizon, ( 1.0 - smoothstep( 0.0, 0.22, abs( e ) ) ) * 0.55 );\n'
+      + '  col = mix( col, uGround, 1.0 - smoothstep( -0.3, 0.0, e ) );\n'
+      + '  float sd = max( dot( d, uSunDir ), 0.0 );\n'
+      + '  col += uSunCol * ( pow( sd, 5.0 ) * 0.16 + pow( sd, 40.0 ) * 0.30 );\n'
+      + '  col = mix( col, uSunCol * 1.6, smoothstep( 0.9993, 0.9996, sd ) );\n'
+      + '  gl_FragColor = vec4( col, 1.0 );\n  #include <tonemapping_fragment>\n  #include <colorspace_fragment>\n  #include <dithering_fragment>\n  gl_FragColor.a = 1.0;\n}',
+    side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false, dithering: true,   // dithering: 8bit出力でのなだらかな空の縞 (バンディング) を崩す。alpha は必ず 1 (パススルーを完全に覆う)
+  });
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), mat);
+  m.renderOrder = -1000; m.frustumCulled = false; m.name = 'vrSky';
+  return m;
+}
+
+function vrBuildWorld() {
+  if (vrw.built) return;
+  const t0 = performance.now();
+  const N = C.VR_GRID, W = N + 1, S = C.VR_SIZE, half = S / 2, cs = S / N, WL = C.VR_WATER_Y;
+  const H = new Float32Array(W * W);
+  let hmin = 1e9, hmax = -1e9;
+  for (let iz = 0; iz < W; iz++) for (let ix = 0; ix < W; ix++) { const h = vrRawHeight(-half + ix * cs, -half + iz * cs); H[iz * W + ix] = h; if (h < hmin) hmin = h; if (h > hmax) hmax = h; }
+  vrw.heights = H;
+  { const pd = new Float32Array(C.NET_SLOTS * 2), v = { x: 0, z: 0, set(x, y, z) { this.x = x; this.z = z; return this; } }; for (let s = 0; s < C.NET_SLOTS; s++) { vrHomeFor(s, v); pd[s * 2] = v.x; pd[s * 2 + 1] = v.z; } vrw.pads = pd; }   // パッドの中心 (vrGround が上面の高さを返すため)
+
+  // --- 樹木・岩の配置 (固定シード。離陸場とパッドの周りは空ける) ---
+  const rnd = vrRng(C.VR_SEED), nC = C.VR_TREES_CONIFER, nB = C.VR_TREES_BROAD, nR = C.VR_ROCKS, total = nC + nB + nR;
+  const tx = new Float32Array(total), tz = new Float32Array(total), ty = new Float32Array(total), th = new Float32Array(total), tr = new Float32Array(total), tk = new Uint8Array(total), tyaw = new Float32Array(total), tsx = new Float32Array(total);
+  const OC = 3, ON = Math.ceil(S / OC), occ = new Uint8Array(ON * ON);
+  let n = 0;
+  const place = (kind, want, accept, size) => {
+    let got = 0, tries = 0;
+    while (got < want && tries < want * 120) {
+      tries++;
+      const x = (rnd() - 0.5) * (S - 40), z = (rnd() - 0.5) * (S - 40);
+      if (x * x + z * z < 34 * 34) continue;
+      const cx = ((x + half) / OC) | 0, cz = ((z + half) / OC) | 0;
+      if (occ[cz * ON + cx]) continue;
+      const h = terrainAt(x, z), ny = vrw.ny;
+      if (!accept(x, z, h, ny)) continue;
+      occ[cz * ON + cx] = 1;
+      const s = size(); tx[n] = x; tz[n] = z; ty[n] = h; tk[n] = kind; th[n] = s[0]; tr[n] = s[1]; tyaw[n] = rnd() * 6.2832; tsx[n] = s[2];
+      n++; got++;
+    }
+    return got;
+  };
+  const dens = (x, z, sd) => vrFbm(x / 55, z / 55, 2, sd);
+  const nc = place(0, nC, (x, z, h, ny) => h > WL + 2.0 && h < 50 && ny > 0.80 && (dens(x, z, 91) > 0.47 || rnd() < 0.04), () => { const s = 0.7 + 0.85 * rnd(); return [10 * s, 2.7 * s, 1]; });
+  const nb = place(1, nB, (x, z, h, ny) => h > WL + 1.2 && h < 16 && ny > 0.84 && (dens(x + 40, z - 20, 77) > 0.46 || rnd() < 0.03), () => { const s = 0.8 + 0.7 * rnd(); return [7.5 * s, 3.2 * s, 1]; });
+  const nr = place(2, nR, (x, z, h, ny) => h > WL - 0.5 && (ny < 0.93 || h > 18 || rnd() < 0.3), () => { const sx = 0.9 + 2.2 * rnd() * rnd() * 1.6; return [sx * 0.6, sx, 1]; });
+  vrw.nTree = n; vrw.tx = tx; vrw.tz = tz; vrw.ty = ty; vrw.th = th; vrw.tr = tr; vrw.tk = tk;
+  // 空間グリッド (CSR)
+  const GN = Math.ceil(S / VR_CELL); vrw.gridN = GN;
+  const cnt = new Int32Array(GN * GN + 1), cellOf = new Int32Array(n);
+  for (let i = 0; i < n; i++) { const c = (Math.min(GN - 1, ((tz[i] + half) / VR_CELL) | 0)) * GN + Math.min(GN - 1, ((tx[i] + half) / VR_CELL) | 0); cellOf[i] = c; cnt[c + 1]++; }
+  for (let i = 0; i < GN * GN; i++) cnt[i + 1] += cnt[i];
+  const fill = cnt.slice(0, GN * GN), idx = new Int32Array(n);
+  for (let i = 0; i < n; i++) idx[fill[cellOf[i]]++] = i;
+  vrw.cellStart = cnt; vrw.cellIdx = idx;
+
+  // --- 地形メッシュ (面ごとの色: 草/乾いた草/砂/岩/雪 + 樹下の暗がり) ---
+  const shade = new Float32Array(N * N).fill(1);
+  for (let i = 0; i < n; i++) {
+    if (tk[i] === 2) continue;
+    const gx = ((tx[i] + half) / cs) | 0, gz = ((tz[i] + half) / cs) | 0, rr = tr[i] + 3;
+    for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+      const cx = gx + dx, cz = gz + dz; if (cx < 0 || cz < 0 || cx >= N || cz >= N) continue;
+      const ddx = -half + (cx + 0.5) * cs - tx[i], ddz = -half + (cz + 0.5) * cs - tz[i];
+      if (ddx * ddx + ddz * ddz < rr * rr) shade[cz * N + cx] = Math.max(0.62, shade[cz * N + cx] * 0.88);
+    }
+  }
+  const nt = N * N * 2, P = new Float32Array(nt * 9), NN = new Float32Array(nt * 9), K = new Float32Array(nt * 9);
+  const cSand = new THREE.Color(0xd2c48c), cG1 = new THREE.Color(0x5aa636), cG2 = new THREE.Color(0x86b94a), cDry = new THREE.Color(0xb9ad5f), cRock = new THREE.Color(0x8f8e88), cAlp = new THREE.Color(0x9aa39c), cSnow = new THREE.Color(0xf3f6f9), cc = new THREE.Color();
+  let o = 0;
+  const tri = (ax, ay, az, bx, by, bz, qx, qy, qz, cell, face) => {
+    const ux = bx - ax, uy = by - ay, uz = bz - az, vx = qx - ax, vy = qy - ay, vz = qz - az;
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1; nx /= l; ny /= l; nz /= l;
+    const mx = (ax + bx + qx) / 3, my = (ay + by + qy) / 3, mz = (az + bz + qz) / 3;
+    if (my < WL + 1.4) cc.copy(cSand);
+    else {
+      cc.copy(cG1).lerp(cG2, vrFbm(mx / 22, mz / 22, 2, 57));
+      cc.lerp(cDry, smoothstep(vrFbm(mx / 70, mz / 70, 2, 13), 0.52, 0.70) * smoothstep(my, 4, 14) * 0.85);
+      cc.lerp(cAlp, smoothstep(my, 26, 42));
+      cc.lerp(cRock, smoothstep(ny, 0.86, 0.68));
+      cc.lerp(cSnow, smoothstep(my, 42, 49) * smoothstep(ny, 0.70, 0.86));
+    }
+    const b = (0.94 + vrHash(face, cell, 9) * 0.12) * shade[cell];
+    for (let k = 0; k < 3; k++) {
+      NN[o + k * 3] = nx; NN[o + k * 3 + 1] = ny; NN[o + k * 3 + 2] = nz;
+      K[o + k * 3] = cc.r * b; K[o + k * 3 + 1] = cc.g * b; K[o + k * 3 + 2] = cc.b * b;
+    }
+    P[o] = ax; P[o + 1] = ay; P[o + 2] = az; P[o + 3] = bx; P[o + 4] = by; P[o + 5] = bz; P[o + 6] = qx; P[o + 7] = qy; P[o + 8] = qz;
+    o += 9;
+  };
+  for (let iz = 0; iz < N; iz++) for (let ix = 0; ix < N; ix++) {
+    const x0 = -half + ix * cs, x1 = x0 + cs, z0 = -half + iz * cs, z1 = z0 + cs, i0 = iz * W + ix, cell = iz * N + ix;
+    const ha = H[i0], hb = H[i0 + 1], hc = H[i0 + W], hd = H[i0 + W + 1];
+    if (((ix + iz) & 1) === 0) { tri(x0, ha, z0, x0, hc, z1, x1, hd, z1, cell, 0); tri(x0, ha, z0, x1, hd, z1, x1, hb, z0, cell, 1); }   // a,c,d / a,d,b
+    else { tri(x0, ha, z0, x0, hc, z1, x1, hb, z0, cell, 0); tri(x1, hb, z0, x0, hc, z1, x1, hd, z1, cell, 1); }                           // a,c,b / b,c,d
+  }
+  const tg = new THREE.BufferGeometry();
+  tg.setAttribute('position', new THREE.BufferAttribute(P, 3)); tg.setAttribute('normal', new THREE.BufferAttribute(NN, 3)); tg.setAttribute('color', new THREE.BufferAttribute(K, 3));
+  const terrain = new THREE.Mesh(tg, new THREE.MeshLambertMaterial({ vertexColors: true }));   // 法線は面ごとに計算済み (非インデックス) → flatShading (画素ごとの微分) は不要
+  terrain.frustumCulled = false; terrain.name = 'vrTerrain'; vrw.terrain = terrain;
+
+  // --- 水面 (湖。不透明の単色 + 弱い鏡面) ---
+  const water = new THREE.Mesh(new THREE.PlaneGeometry(190, 190).rotateX(-Math.PI / 2), new THREE.MeshPhongMaterial({ color: 0x3b86ad, specular: 0x9bb8cc, shininess: 60, flatShading: true }));
+  water.position.set(-85, WL, -140); water.name = 'vrWater'; vrw.water = water;
+
+  // --- 樹木・岩 (InstancedMesh 3本) ---
+  const mk = (geo, count) => { const m = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), Math.max(1, count)); m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.StaticDrawUsage); return m; };
+  const mC = mk(vrConiferGeo(), nc), mB = mk(vrBroadGeo(), nb), mR = mk(vrRockGeo(), nr);
+  mC.name = 'vrConifers'; mB.name = 'vrBroadleaf'; mR.name = 'vrRocks';
+  const meshes = [mC, mB, mR], cnts = [0, 0, 0], mm = new THREE.Matrix4(), qq = new THREE.Quaternion(), pp = new THREE.Vector3(), ss = new THREE.Vector3(), col = new THREE.Color();
+  for (let i = 0; i < n; i++) {
+    const k = tk[i], m = meshes[k];
+    qq.setFromAxisAngle(Y_AXIS, tyaw[i]);
+    if (k === 2) {
+      const R = tr[i]; ss.set(R * (0.8 + 0.5 * vrHash(i, 1, 2)), R * (0.55 + 0.4 * vrHash(i, 2, 2)), R * (0.8 + 0.5 * vrHash(i, 3, 2))); pp.set(tx[i], ty[i] + R * 0.12, tz[i]);
+      const g = 0.82 + 0.3 * vrHash(i, 4, 2); col.setRGB(g, g * (0.97 + 0.06 * vrHash(i, 5, 2)), g * (0.95 + 0.08 * vrHash(i, 6, 2)));
+    } else {
+      ss.set(tr[i], th[i], tr[i]); pp.set(tx[i], ty[i] - 0.25, tz[i]);
+      const g = 0.82 + 0.34 * vrHash(i, 4, 2), hs = vrHash(i, 5, 2);
+      if (k === 0) col.setRGB(g * (0.9 + 0.16 * hs), g, g * (0.9 + 0.16 * (1 - hs))); else col.setRGB(g * (0.88 + 0.3 * hs), g, g * (0.8 + 0.2 * (1 - hs)));
+    }
+    mm.compose(pp, qq, ss); m.setMatrixAt(cnts[k], mm); m.setColorAt(cnts[k], col); cnts[k]++;
+  }
+  for (let k = 0; k < 3; k++) { meshes[k].count = cnts[k]; meshes[k].instanceMatrix.needsUpdate = true; if (meshes[k].instanceColor) meshes[k].instanceColor.needsUpdate = true; }
+
+  // --- 離着陸パッド (全24スロット分を1ドローコールで。色=スロット色を淡く) ---
+  const pads = mk(vrPadGeo(), C.NET_SLOTS);
+  pads.material.polygonOffset = true; pads.material.polygonOffsetFactor = -1; pads.material.polygonOffsetUnits = -1; pads.name = 'vrPads';   // 遠方で地形とZファイトしない程度に弱く (強いと浅い角度で機体の脚がパッドに隠れる)
+  for (let s = 0; s < C.NET_SLOTS; s++) {
+    vrHomeFor(s, pp); pp.y = terrainAt(pp.x, pp.z); mm.compose(pp, qq.identity(), ss.set(1, 1, 1)); pads.setMatrixAt(s, mm);
+    col.set(PALETTE[s % PALETTE.length]).lerp(cSnow, 0.55); pads.setColorAt(s, col);
+  }
+  pads.instanceMatrix.needsUpdate = true; pads.instanceColor.needsUpdate = true;
+
+  // --- 雲 (つぶした低ポリの塊を InstancedMesh 1本で) ---
+  const rc = vrRng(C.VR_SEED + 7), cl = [];
+  for (let i = 0; i < 16; i++) {
+    const a = rc() * 6.2832, d = 90 + rc() * 330, cx = Math.sin(a) * d, cz = -Math.cos(a) * d, cy = 100 + rc() * 55, np = 3 + ((rc() * 3) | 0);
+    for (let j = 0; j < np; j++) cl.push([cx + (rc() - 0.5) * 70, cy + (rc() - 0.5) * 6, cz + (rc() - 0.5) * 30, 22 + rc() * 28, 5 + rc() * 4, 14 + rc() * 14]);
+  }
+  const clouds = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x39445a, flatShading: true }), cl.length);
+  for (let i = 0; i < cl.length; i++) { const c = cl[i]; mm.compose(pp.set(c[0], c[1], c[2]), qq.setFromAxisAngle(Y_AXIS, rc() * 3), ss.set(c[3], c[4], c[5])); clouds.setMatrixAt(i, mm); }
+  clouds.frustumCulled = false; clouds.name = 'vrClouds'; vrw.clouds = clouds;
+
+  const sky = vrBuildSky(); vrw.sky = sky;
+  vrw.fog = new THREE.FogExp2(0xcfe3ef, C.VR_FOG);
+  const group = new THREE.Group(); group.name = 'vrWorld';
+  group.add(sky, terrain, water, mC, mB, mR, pads, clouds);
+  group.visible = false; scene.add(group); vrw.group = group;
+  vrw.built = true; vrw.buildMs = performance.now() - t0;
+  vrw.stats = { hmin, hmax, conifers: nc, broadleaf: nb, rocks: nr, tris: nt };
+}
+
+/* ---- 衝突 (地形・水面・樹木・世界の縁) ---- */
+/** 空間グリッド経由の樹木・岩との衝突。最大でも近傍9セル。ヒットしたら true。 */
+function vrTreeCollide() {
+  const half = C.VR_SIZE / 2, GN = vrw.gridN, R = C.RADIUS, e = C.RESTITUTION, cy = pos.y + C.BODY_CENTER;
+  const gx = Math.min(GN - 1, Math.max(0, ((pos.x + half) / VR_CELL) | 0)), gz = Math.min(GN - 1, Math.max(0, ((pos.z + half) / VR_CELL) | 0));
+  let hit = false;
+  for (let dz = -1; dz <= 1; dz++) {
+    const cz = gz + dz; if (cz < 0 || cz >= GN) continue;
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = gx + dx; if (cx < 0 || cx >= GN) continue;
+      const c = cz * GN + cx;
+      for (let k = vrw.cellStart[c], k1 = vrw.cellStart[c + 1]; k < k1; k++) {
+        const i = vrw.cellIdx[k], hh = cy - vrw.ty[i], Ht = vrw.th[i];
+        if (hh > Ht + R || hh < -0.5) continue;
+        const kind = vrw.tk[i], Rc = vrw.tr[i];
+        let rc;                                              // その高さでの水平断面の半径
+        if (kind === 0) rc = hh < 0.12 * Ht ? 0.3 : Rc * (1 - (hh - 0.1 * Ht) / (0.9 * Ht)) + 0.1;   // 円錐 (下は幹)
+        else if (kind === 1) rc = hh < 0.4 * Ht ? 0.35 : Rc;                                         // 幹 + 円柱の樹冠
+        else rc = Rc;                                                                                  // 岩: 円柱
+        if (rc < 0.05) rc = 0.05;
+        const ox = pos.x - vrw.tx[i], oz = pos.z - vrw.tz[i], d2 = ox * ox + oz * oz, lim = rc + R;
+        if (d2 >= lim * lim) continue;
+        const d = Math.sqrt(d2);
+        let nx, nz; if (d > 1e-4) { nx = ox / d; nz = oz / d; } else { nx = 1; nz = 0; }
+        pos.x = vrw.tx[i] + nx * lim; pos.z = vrw.tz[i] + nz * lim;
+        const vn = vel.x * nx + vel.z * nz;
+        if (vn < 0) { vel.x -= (1 + e) * vn * nx; vel.z -= (1 + e) * vn * nz; }
+        vel.x *= 0.985; vel.z *= 0.985;
+        hit = true; vrw.treeHits++;
+      }
+    }
+  }
+  return hit;
+}
+/** (x,z) 付近の障害物の最も高い所 (地形・樹冠・岩。margin だけ水平に広げて判定)。AUTO/呼び戻しの回避と目標点の選択用。確保なし。 */
+function vrSurfaceTop(x, z, margin) {
+  const half = C.VR_SIZE / 2, GN = vrw.gridN;
+  let top = vrGround(x, z);
+  const gx = Math.min(GN - 1, Math.max(0, ((x + half) / VR_CELL) | 0)), gz = Math.min(GN - 1, Math.max(0, ((z + half) / VR_CELL) | 0));
+  for (let dz = -1; dz <= 1; dz++) {
+    const cz = gz + dz; if (cz < 0 || cz >= GN) continue;
+    for (let dx = -1; dx <= 1; dx++) {
+      const cx = gx + dx; if (cx < 0 || cx >= GN) continue;
+      const c = cz * GN + cx;
+      for (let k = vrw.cellStart[c], k1 = vrw.cellStart[c + 1]; k < k1; k++) {
+        const i = vrw.cellIdx[k], ox = x - vrw.tx[i], oz = z - vrw.tz[i], lim = vrw.tr[i] + margin;
+        if (ox * ox + oz * oz < lim * lim) { const t = vrw.ty[i] + vrw.th[i]; if (t > top) top = t; }
+      }
+    }
+  }
+  return top;
+}
+
+/** VR中の衝突: 世界の縁 (ばね+減衰で押し戻す柔らかい壁) → 樹木・岩 → 天井 → 地面 (地形/水面)。MRの平面・部屋の箱は一切見ない。 */
+function collideVR() {
+  const e = C.RESTITUTION, dt = C.DT, half = C.VR_SIZE / 2, lim = half - C.VR_EDGE_SOFT;
+  // 柔らかい縁: 縁の手前 VR_EDGE_SOFT で効き始め、外向き速度を減衰させて内向きへ押す。見えない硬い壁には当たらない。
+  let over = Math.abs(pos.x) - lim;
+  if (over > 0) { const s = pos.x > 0 ? 1 : -1, vo = vel.x * s; vel.x -= s * (over * 3.0 + (vo > 0 ? vo * 0.9 * Math.min(1, over / 5) : 0)) * dt; }
+  over = Math.abs(pos.z) - lim;
+  if (over > 0) { const s = pos.z > 0 ? 1 : -1, vo = vel.z * s; vel.z -= s * (over * 3.0 + (vo > 0 ? vo * 0.9 * Math.min(1, over / 5) : 0)) * dt; }
+  const hard = half - 4;                                      // 万一の安全枠
+  if (pos.x > hard) { pos.x = hard; if (vel.x > 0) vel.x = 0; } else if (pos.x < -hard) { pos.x = -hard; if (vel.x < 0) vel.x = 0; }
+  if (pos.z > hard) { pos.z = hard; if (vel.z > 0) vel.z = 0; } else if (pos.z < -hard) { pos.z = -hard; if (vel.z < 0) vel.z = 0; }
+  vrTreeCollide();
+  // 天井
+  const ceil = C.VR_CEIL;
+  if (pos.y > ceil - 6 && vel.y > 0) vel.y *= 1 - 3 * dt;
+  if (pos.y > ceil) { pos.y = ceil; if (vel.y > 0) vel.y *= -e; }
+  // 地面
+  const g = vrGroundMax(pos.x, pos.z);
+  if (pos.y < g) {
+    const nx = vrw.nx, ny = vrw.ny, nz = vrw.nz;
+    pos.y = g;
+    const vn = vel.x * nx + vel.y * ny + vel.z * nz;
+    if (vn < 0) { const k = vn < -1.0 ? (1 + e) : 1; vel.x -= k * vn * nx; vel.y -= k * vn * ny; vel.z -= k * vn * nz; }
+    vel.x *= 0.985; vel.z *= 0.985;
+    if (sim.state === ST_FLYING || sim.state === ST_TAKEOFF) vrw.contacts++;
+  }
+}
+
+/* ---- AUTO: 景色を巡る周遊 / 呼び戻し ---- */
+/** 進行方向 (dirx,dirz 単位ベクトル) の先 6〜48m を地形・樹冠の高さで調べ、通過に必要な高度を返す。 */
+function vrAheadY(dirx, dirz) {
+  let need = -1e9;
+  for (let d = 4; d <= 52; d += 6) { const t = vrSurfaceTop(pos.x + dirx * d, pos.z + dirz * d, 3) + 7; if (t > need) need = t; }
+  return need;
+}
+function vrPickWaypoint() {
+  const hx = world.home.x, hz = world.home.z, lim = C.VR_SIZE / 2 - 45;
+  for (let i = 0; i < 40; i++) {
+    const a = rand(0, 6.2832), r = 25 + Math.sqrt(Math.random()) * 125;
+    const x = clamp(hx + Math.sin(a) * r, -lim, lim), z = clamp(hz - Math.cos(a) * r, -lim, lim);
+    if (Math.hypot(x - pos.x, z - pos.z) < 30) continue;
+    const g = vrGround(x, z), top = vrSurfaceTop(x, z, 6);
+    const y = Math.min(C.VR_CEIL - 8, Math.max(g + rand(6, 25), top + 4));      // 地形から6〜25m上。樹冠・岩の中を目標にしない
+    auto.wp.set(x, y, z); auto.phase = 0; auto.pickT = sim.t; auto.deadline = sim.t + Math.hypot(x - pos.x, z - pos.z) / 2.5 + 8;
+    return;
+  }
+  auto.wp.set(hx, vrGround(hx, hz) + 14, hz - 40); auto.phase = 0; auto.pickT = sim.t; auto.deadline = sim.t + 30;
+}
+function vrAutoCommands(dt) {
+  const dx = auto.wp.x - pos.x, dz = auto.wp.z - pos.z, dh = Math.hypot(dx, dz);
+  if (auto.phase === 1) {                                     // 一瞬のホバー (次の目標へ)
+    auto.speed += (0 - auto.speed) * (1 - Math.exp(-dt / 0.4));
+    vCmd.set(-Math.sin(sim.yaw) * auto.speed, 0, -Math.cos(sim.yaw) * auto.speed);
+    if (sim.t > auto.until) vrPickWaypoint();
+    return;
+  }
+  if (dh < 9 || sim.t > auto.deadline) { auto.phase = 1; auto.until = sim.t + rand(0.1, 0.6); return; }
+  const des = Math.atan2(-dx, -dz), err = angleDiff(des, sim.yaw);
+  yawCmd = clamp(err * 1.7, -1.1, 1.1);
+  const turn = 1 - 0.7 * Math.min(1, Math.abs(err) / 1.2);    // 大きく曲がる間は減速 (機首方向に進みながら旋回 → 自然にバンクする)
+  const target = P.AUTO_VMAX * turn * Math.min(1, dh / 25);
+  auto.speed += (Math.max(target, 0.8) - auto.speed) * (1 - Math.exp(-dt / 0.8));
+  const sn = Math.sin(sim.yaw), cs = Math.cos(sim.yaw);
+  vCmd.x = -sn * auto.speed; vCmd.z = -cs * auto.speed;
+  if ((vrw.tick++ % 6) === 0) vrw.avoidY = vrAheadY(-sn, -cs);       // 20Hz で十分
+  const yT = Math.min(C.VR_CEIL - 5, Math.max(auto.wp.y, vrw.avoidY));
+  vCmd.y = clamp((yT - pos.y) * 0.7, -P.AUTO_VY_MAX, P.AUTO_VY_MAX);
+  // 現在地が樹冠・地形の「すぐ上」でも下げ過ぎない (最低でも地表+4m)
+  const floorY = vrSurfaceTop(pos.x, pos.z, 3) + 4;
+  if (pos.y < floorY && vCmd.y < 1.5) vCmd.y = 1.5;
+}
+function vrRecallCommands() {
+  const hx = world.home.x, hz = world.home.z, gy = vrGround(hx, hz), dx = hx - pos.x, dz = hz - pos.z, dh = Math.hypot(dx, dz);
+  const v = clamp(dh * 0.9, 0, P.RECALL_VMAX);
+  if (dh > 0.05) { vCmd.x = dx / dh * v; vCmd.z = dz / dh * v; }
+  if (dh > 6) { yawCmd = clamp(angleDiff(Math.atan2(-dx, -dz), sim.yaw) * 2.5, -1.6, 1.6); }
+  let yT;
+  if (dh > 14) {
+    const ux = dx / dh, uz = dz / dh;
+    if ((vrw.tick++ % 6) === 0) vrw.avoidY = vrAheadY(ux, uz);
+    yT = Math.min(C.VR_CEIL - 5, Math.max(gy + 12, vrw.avoidY));
+  } else yT = gy + 3;                                          // パッドの真上 3m
+  vCmd.y = clamp((yT - pos.y) * 0.9, -4, 4);
+}
+
+/* ---- リグ (ユーザーの視点を動かす) / フェード / ビネット ---- */
+const rigS = { init: false, yaw: 0, base: 0, p: new Float64Array(3), v: new Float64Array(3), pp: new Float64Array(3), pyaw: 0, speed: 0, yawRate: 0, vig: 0 };   // base: 視点を作り直した時にユーザーが向いていた方位 (local-floor)
+const _zero = new THREE.Vector3();
+function dampAxis(i, target, smooth, dt) {                    // 臨界減衰 (SmoothDamp)
+  const p = rigS.p, v = rigS.v, om = 2 / smooth, x = om * dt, ex = 1 / (1 + x + 0.48 * x * x + 0.235 * x * x * x);
+  const ch = p[i] - target, tmp = (v[i] + om * ch) * dt;
+  v[i] = (v[i] - om * tmp) * ex; p[i] = target + (ch + tmp) * ex;
+}
+/** 毎フレーム (VR中): rig を「目がちょうど狙いの位置に来る」ように置く。
+ *  rig.position = 狙いの目の位置 - R(rigYaw)*(頭のローカル位置)。これでユーザーが部屋の中を動いても仮想の視点は動かない。
+ *  頭の「回転」はそのまま残る (見回せる)。rig は ヨーのみ (ロール・ピッチなし = 水平線は常に水平)。
+ *  rig のヨー = (平滑化した機首方位) - base。base は視点を作り直した瞬間 (VRへ入った時・視点切替時) にユーザーが実際に向いていた方位。
+ *  local-floor の「正面」は Quest では最後にリセンターした向きで、いま向いている向きとは限らない。base を引くことで、
+ *  切り替えた時に向いていた方向がそのまま機首方向 (一人称の正面 / 三人称で機体が見える方向) になる。以後は体を回せば普通に見回せる。 */
+function vrUpdateRig(dt) {
+  const fpv = world.cam === 0, xrp = renderer.xr.isPresenting;
+  if (!rigS.init) { rigS.yaw = sim.yaw; rigS.base = xrp && head.valid ? Math.atan2(-head.fwdH.x, -head.fwdH.z) : 0; }
+  else {
+    rigS.yaw += angleDiff(sim.yaw, rigS.yaw) * (1 - Math.exp(-dt / (fpv ? C.VR_FPV_YAW_T : C.VR_TPV_YAW_T)));
+    if (rigS.yaw > Math.PI) rigS.yaw -= Math.PI * 2; else if (rigS.yaw < -Math.PI) rigS.yaw += Math.PI * 2;
+  }
+  const sn = Math.sin(rigS.yaw), cs = Math.cos(rigS.yaw);
+  let tx, ty, tz;
+  if (fpv) {                                                  // 機首カメラの位置 (モニター用FPVカメラと同じ式)
+    tmpV.copy(dUD.gimbal.position).applyQuaternion(drone.quaternion).add(drone.position); tx = tmpV.x; ty = tmpV.y; tz = tmpV.z;
+  } else {                                                    // 機体の後ろ(機首の逆向き = (sin,0,cos)) VR_TPV_BACK, 上 VR_TPV_UP
+    tx = drone.position.x + sn * C.VR_TPV_BACK; ty = drone.position.y + C.VR_TPV_UP; tz = drone.position.z + cs * C.VR_TPV_BACK;
+    const g = vrGround(tx, tz) + C.VR_CLEAR; if (ty < g) ty = g;
+  }
+  const p = rigS.p;
+  if (!rigS.init) { p[0] = tx; p[1] = ty; p[2] = tz; rigS.v.fill(0); rigS.pp[0] = tx; rigS.pp[1] = ty; rigS.pp[2] = tz; rigS.pyaw = rigS.yaw; rigS.init = true; }
+  else if (fpv) { p[0] = tx; p[1] = ty; p[2] = tz; }          // FPVは遅れなし (位置は機首カメラに直結。向きだけ平滑化)
+  else {
+    dampAxis(0, tx, C.VR_TPV_POS_T, dt); dampAxis(1, ty, C.VR_TPV_POS_T, dt); dampAxis(2, tz, C.VR_TPV_POS_T, dt);
+    const g = vrGround(p[0], p[2]) + C.VR_CLEAR; if (p[1] < g) { p[1] = g; if (rigS.v[1] < 0) rigS.v[1] = 0; }
+  }
+  const hl = xrp ? head.pos : _zero, ry = rigS.yaw - rigS.base, rs = Math.sin(ry), rc = Math.cos(ry);
+  rig.rotation.set(0, ry, 0);
+  rig.position.set(p[0] - (rc * hl.x + rs * hl.z), p[1] - hl.y, p[2] - (-rs * hl.x + rc * hl.z));
+  eyeW.set(p[0], p[1], p[2]);
+  eyeQ.setFromAxisAngle(Y_AXIS, ry); if (xrp) eyeQ.multiply(head.quat);
+  if (!xrp) {                                                 // デスクトップ: カメラ自体をFPV/TPVのカメラにする
+    camera.position.set(0, 0, 0);
+    if (fpv) buildQuat(camera.quaternion, 0, C.FPV_TILT_FOLLOW * sim.pitch - 0.1, 0);
+    else buildQuat(camera.quaternion, 0, Math.atan2(p[1] - (drone.position.y + 0.12), C.VR_TPV_BACK), 0);
+  }
+  // ビネット用の「視点の移動量」 (頭の動きは含めない: 狙いの位置の変化だけ)
+  if (dt > 1e-4) {
+    const k = 1 - Math.exp(-dt / 0.1), sp = Math.hypot(p[0] - rigS.pp[0], p[1] - rigS.pp[1], p[2] - rigS.pp[2]) / dt, yr = angleDiff(rigS.yaw, rigS.pyaw) / dt;
+    rigS.speed += (sp - rigS.speed) * k; rigS.yawRate += (yr - rigS.yawRate) * k;
+  }
+  rigS.pp[0] = p[0]; rigS.pp[1] = p[1]; rigS.pp[2] = p[2]; rigS.pyaw = rigS.yaw;
+}
+
+// --- 頭に固定した全面フェードとビネット (カメラの子。両目に同じ位置で出る) ---
+const fadeMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, depthTest: false, depthWrite: false, toneMapped: false, fog: false });
+const fadeQuad = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 2.6), fadeMat);
+fadeQuad.position.set(0, 0, -0.3); fadeQuad.renderOrder = 1001; fadeQuad.frustumCulled = false; fadeQuad.visible = false; fadeQuad.name = 'vrFade';
+const vigMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthTest: false, depthWrite: false, toneMapped: false, fog: false });
+{
+  const cv = document.createElement('canvas'); cv.width = cv.height = 256;
+  const x = cv.getContext('2d'), gr = x.createRadialGradient(128, 128, 0, 128, 128, 128);
+  gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(0.5, 'rgba(0,0,0,0)'); gr.addColorStop(0.78, 'rgba(0,0,0,0.8)'); gr.addColorStop(1, 'rgba(0,0,0,1)');
+  x.fillStyle = gr; x.fillRect(0, 0, 256, 256);
+  vigMat.map = new THREE.CanvasTexture(cv);
+  vigMat.map.repeat.set(3, 3); vigMat.map.offset.set(-1, -1);   // 模様は板の中央1/3だけに描き、その外側は端の画素 (黒) で埋める: 板を3倍に広げても見た目は同じ
+}
+// 板は視野より十分大きく (半角 約75°まで)。視野ぎりぎりの大きさだと、外側の視野角が広い実機 (目ごとに非対称な視錐台) で板の端の外に明るい隙間が見える。
+const vigQuad = new THREE.Mesh(new THREE.PlaneGeometry(6, 6), vigMat);
+vigQuad.position.set(0, 0, -1); vigQuad.renderOrder = 1000; vigQuad.frustumCulled = false; vigQuad.visible = false; vigQuad.name = 'vrVignette';
+camera.add(fadeQuad, vigQuad);
+
+const fade = { phase: 0, t: 0, a: 0, kind: 0, arg: false, black: 0, hold: 0 };    // phase: 0=なし 1=暗転中(出) 2=明転中(入)。kind: 1=ワールド切替 2=視点切替。black: 真っ暗で描いたフレーム数 / hold: 切替後に真っ暗のまま待つ残りフレーム数
+const vrHold = { t0: 0, fired: false, step: 0 };               // 右スティック長押し
+function vrRequestWorld(vrOn) {
+  if (fade.phase !== 0 || vrOn === world.vr || !placed || spec.on || cal.active) return false;   // 手動の位置合わせ中は切り替えない (実物の2点に触れている最中)
+  fade.phase = 1; fade.t = 0; fade.black = 0; fade.hold = 0; fade.kind = 1; fade.arg = vrOn; return true;
+}
+function vrRequestCam() {
+  if (!world.vr || fade.phase !== 0 || spec.on) return false;
+  fade.phase = 1; fade.t = 0; fade.black = 0; fade.hold = 0; fade.kind = 2; return true;
+}
+/** 暗転 → (真っ暗のフレームを1枚描いてから) 切替 → (真っ暗のまま数フレーム) → 明転。
+ *  初回の切替は世界の生成とシェーダーのコンパイル・GPUへの転送で数百ms止まりうる。止まっている間ヘッドセットに残るのは直前に描いたフレームなので、
+ *  必ず「完全に真っ暗なフレーム」を出してから重い処理を行い、最初のVRフレーム (バッファ転送で重い) も暗幕の裏で描く。 */
+function vrFadeStep(dt) {
+  if (fade.phase === 0) return;
+  if (fade.phase === 1) {
+    fade.t += dt / C.VR_FADE_S;
+    fade.a = Math.min(1, fade.t);
+    if (fade.t >= 1 && fade.black++ >= 1) {                   // 真っ暗のフレームを1枚描き終えた: 世界/視点を切り替える
+      let ok = true;
+      try { if (fade.kind === 1) applyWorld(fade.arg); else { world.cam = world.cam === 0 ? 1 : 0; rigS.init = false; } } catch (e) { ok = false; vrFail(e); }
+      if (ok) { fade.phase = 2; fade.t = 0; fade.hold = 3; }  // 失敗時は vrFail がフェードを破棄済み (MRが見える状態)
+    }
+  } else if (fade.hold > 0) { fade.hold--; fade.a = 1; }       // 切替直後の重いフレームは真っ暗のまま
+  else {
+    fade.t += dt / C.VR_FADE_S;
+    fade.a = Math.max(0, 1 - fade.t);
+    if (fade.t >= 1) { fade.phase = 0; fade.a = 0; }
+  }
+}
+/** VR側で例外: MRへ安全に戻してフレームループを守る。どの段階で失敗しても「暗幕なし・パススルーが見える・MRの物理」になることだけは保証する。 */
+function vrFail(e) {
+  vrw.errN++;
+  fade.phase = 0; fade.a = 0; fade.hold = 0; fadeMat.opacity = 0; fadeQuad.visible = false;
+  try { if (world.vr) applyWorld(false); } catch (e2) { /* 下の最小限の復帰へ */ }
+  if (world.vr) { world.vr = false; Object.assign(P, P_MR); }
+  try { vrSceneLook(false); } catch (e3) { /* 下で最低限だけ戻す */ }
+  try {                                                        // 見た目の最小限の復帰 (applyWorld(false) が途中で失敗していても)
+    if (vrw.group) vrw.group.visible = false;
+    scene.fog = null; applyDepthMeshMode(false);
+    rig.position.set(0, 0, 0); rig.quaternion.identity(); rig.scale.set(1, 1, 1);
+    vigMat.opacity = 0; vigQuad.visible = false; rigS.vig = 0; drone.visible = true;
+  } catch (e3) { /* ignore */ }
+}
+function vrUpdateOverlays(dt) {
+  const t = Math.tan(camera.fov * Math.PI / 360), asp = renderer.xr.isPresenting ? 1 : camera.aspect;
+  fadeMat.opacity = fade.a; fadeQuad.visible = fade.a > 0.001;
+  if (world.vr && C.VR_VIGNETTE) {
+    const vs = Math.max(0, rigS.speed - 0.6) / (C.VR_VIG_SPEED - 0.6), vy = Math.max(0, Math.abs(rigS.yawRate) - 0.12) / (C.VR_VIG_YAW - 0.12);
+    const target = C.VR_VIGNETTE_MAX * clamp(Math.max(vs, vy), 0, 1);
+    rigS.vig += (target - rigS.vig) * (1 - Math.exp(-dt / (target > rigS.vig ? 0.15 : 0.4)));
+    if (rigS.vig < 0.003 && target === 0) rigS.vig = 0;
+  } else rigS.vig = 0;
+  vigMat.opacity = rigS.vig; vigQuad.visible = rigS.vig > 0.004;
+  if (vigQuad.visible) vigQuad.scale.set(t * 1.2 * Math.max(1, asp), t * 1.2, 1);
+}
+
+/* ---- 環境音: 風 (ろ過ノイズ。低音量・ゆっくり変動・速度で強まる) ---- */
+const wind = { src: null, filt: null, gain: null, ctx: null, acc: 0 };
+function windStart() {
+  const ctx = audio.ctx;
+  if (!ctx || wind.src) return;
+  try {
+    const len = ctx.sampleRate * 3, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < len; i++) { const w = Math.random() * 2 - 1; b0 = 0.99765 * b0 + w * 0.099046; b1 = 0.963 * b1 + w * 0.2965164; b2 = 0.57 * b2 + w * 1.0526913; d[i] = (b0 + b1 + b2 + w * 0.1848) * 0.11; }
+    const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const f = ctx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 500; f.Q.value = 0.7;
+    const g = ctx.createGain(); g.gain.value = 0;
+    src.connect(f); f.connect(g); g.connect(ctx.destination); src.start();
+    g.gain.setTargetAtTime(0.07, ctx.currentTime, 0.5);       // ゆっくり立ち上げる (クリックなし)
+    wind.src = src; wind.filt = f; wind.gain = g; wind.ctx = ctx;
+  } catch (e) { wind.src = null; }
+}
+function windStop() {
+  const src = wind.src, f = wind.filt, g = wind.gain, ctx = wind.ctx;
+  wind.src = wind.filt = wind.gain = wind.ctx = null;
+  if (!src) return;
+  try { const t = ctx.currentTime; g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.linearRampToValueAtTime(0, t + 0.12); } catch (e) { /* ignore */ }
+  setTimeout(() => { try { src.stop(); src.disconnect(); f.disconnect(); g.disconnect(); } catch (e) { /* ignore */ } }, 200);
+}
+function windUpdate(now, speed) {
+  if (!wind.src || now - wind.acc < 0.1) return;
+  wind.acc = now;
+  const t = wind.ctx.currentTime, k = Math.min(speed / 10, 1);
+  wind.gain.gain.setTargetAtTime(0.045 + 0.03 * Math.sin(now * 0.37) + 0.02 * Math.sin(now * 0.91 + 1.3) + 0.07 * k, t, 0.3);
+  wind.filt.frequency.setTargetAtTime(350 + 160 * (0.5 + 0.5 * Math.sin(now * 0.23 + 1.0)) + 60 * speed, t, 0.3);
+}
+
+/* ---- ワールド切替 ---- */
+// three r170 が深度センシングを使う箇所は3つだけ (src を grep して確認):
+//  (1) WebGLRenderer.render: xr.getDepthSensingMesh() を描画リストの先頭へ (オクルージョン用の深度プリパス)。
+//  (2) WebGLRenderer.render: xr.hasDepthSensing() が true の間は背景パス (= フレーム先頭の clear) を行わない。
+//  (3) WebXRManager.updateCamera: 深度テクスチャがあり、その depthNear/depthFar がセッションの値と違えば、カメラの near/far を
+//      センサーの値で上書きして session.updateRenderState する (アプリが camera.near/far を変えても無視される)。
+// VR中は (1)(2) を「深度センシングなし」の答えを返す関数へ差し替え、(3) は vrDepthRange() がセッションの範囲を直接指定し直す。
+// MRへ戻る時は three 本来の関数・three が望む範囲へ戻す。マテリアルのシェーダーには深度センシングは一切入っていない。
+const depthHook = { orig: renderer.xr.getDepthSensingMesh, has: renderer.xr.hasDepthSensing };    // three 本来の関数 (MR中はこれをそのまま使う)
+const noDepthMesh = () => null, noDepthSensing = () => false;
+function applyDepthMeshMode(vrOn) {
+  renderer.xr.getDepthSensingMesh = vrOn ? noDepthMesh : depthHook.orig;
+  renderer.xr.hasDepthSensing = vrOn ? noDepthSensing : depthHook.has;
+}
+const vrDepth = { tries: 0, wait: 0, set: false };
+const nearEq = (a, b) => a === b || Math.abs(a - b) <= 1e-4 * Math.max(1, Math.abs(b));
+/** VR中 (毎フレーム, XRのみ): three がセンサーの範囲を強制していて、セッションの depthNear/depthFar が VR の範囲になっていなければ指定し直す。
+ *  深度センシングが有効だと three がセンサーの範囲 (遠方が数十mのこともありうる) を強制するので、600mの世界が遠方クリップで切れてパススルーが覗く/HUDが欠けるのを防ぐ。
+ *  深度センシングが無い場合は three 自身が camera.near/far を渡すので、ここは何もしない (値が一致する)。 */
+function vrDepthRange() {
+  const s = xrSession;
+  if (!s || !renderer.xr.isPresenting) return;
+  if (vrDepth.wait > 0) { vrDepth.wait--; return; }
+  const xc = renderer.xr.getCamera();                          // three が直前の描画で使った範囲
+  if (nearEq(xc.near, C.VR_NEAR) && nearEq(xc.far, C.VR_FAR)) return;   // three 自身が VR の範囲を渡している (深度センサーの上書きなし) → 何もしない
+  const rs = s.renderState;
+  if (!rs || (nearEq(rs.depthNear, C.VR_NEAR) && nearEq(rs.depthFar, C.VR_FAR))) return;
+  if (vrDepth.tries >= 6) return;                              // UAが値を丸める等で一致しない場合に毎フレーム呼び続けない
+  vrDepth.tries++; vrDepth.wait = 3; vrDepth.set = true;       // 反映は次のフレーム以降 (WebXRの仕様)
+  try { s.updateRenderState({ depthNear: C.VR_NEAR, depthFar: C.VR_FAR }); } catch (e) { vrDepth.tries = 99; }   // 拒否されてもVRは続ける (遠方が切れるだけ。空は必ず全面を覆う)
+}
+/** MRへ戻る時: three がセンサーの範囲を強制している場合 (XRカメラの near/far が VR の値になっていない) は、その範囲へ戻す。
+ *  そうでなければ three が次の描画で camera.near/far を渡し直すので何もしない。 */
+function vrDepthRestore() {
+  const was = vrDepth.set; vrDepth.tries = 0; vrDepth.wait = 0; vrDepth.set = false;
+  const s = xrSession;
+  if (!was || !s || !renderer.xr.isPresenting) return;
+  try {
+    const xc = renderer.xr.getCamera();
+    if (xc.near > 0 && xc.far > xc.near && !(nearEq(xc.near, C.VR_NEAR) && nearEq(xc.far, C.VR_FAR))) s.updateRenderState({ depthNear: xc.near, depthFar: xc.far });
+  } catch (e) { /* セッション終了直後など */ }
+}
+
+/** 見た目だけをVR(true)/MR(false)にする: 世界の表示・霧・照明・カメラの範囲・深度メッシュ。パイロットでも観戦(PC)でも使う。 */
+function vrSceneLook(on) {
+  if (on) {
+    vrBuildWorld();
+    vrw.group.visible = true; scene.fog = vrw.fog;
+    hemi.intensity = C.VR_HEMI_I; hemi.color.setHex(0xcfe4ff); hemi.groundColor.setHex(0x6d7a4d);
+    sun.intensity = C.VR_SUN_I; sun.color.setHex(0xfff0d6); sun.position.copy(VR_SUN).multiplyScalar(100);
+    camera.near = C.VR_NEAR; camera.far = C.VR_FAR; camera.updateProjectionMatrix();
+    vrDepth.wait = 1;                                         // 最初のVRフレームを three が描いてから判定する
+    applyDepthMeshMode(true);
+    if (!vrw.compiled) {                                      // 霧あり・VR照明のシェーダー変種を先に作る (初回の切替の暗転中に払う)
+      vrw.compiled = true; const t0 = performance.now();
+      try { renderer.compile(scene, camera); } catch (e) { /* 初回描画時に作られる */ }
+      vrw.compileMs = performance.now() - t0;
+    }
+  } else {
+    if (vrw.group) vrw.group.visible = false;
+    scene.fog = null;
+    hemi.intensity = mrLight.hi; hemi.color.copy(mrLight.hc); hemi.groundColor.copy(mrLight.hg);
+    sun.intensity = mrLight.si; sun.color.copy(mrLight.sc); sun.position.copy(mrLight.sp);
+    camera.near = mrCam.near; camera.far = mrCam.far; camera.updateProjectionMatrix();
+    applyDepthMeshMode(false);
+    try { vrDepthRestore(); } catch (e) { /* ignore */ }
+  }
+}
+
+/** パイロットをVRパッドに「着陸した状態」で置く (速度は持ち越さない)。 */
+function vrPlaceAtHome() {
+  vrHomeFor(net.slot, world.home);
+  world.home.y = vrGroundMax(world.home.x, world.home.z);
+  pos.set(world.home.x, world.home.y, world.home.z); sim.groundY = world.home.y; sim.yaw = 0;
+}
+function landHere() {                                          // 持ち越さない状態へ: 着陸・無速度・指令なし
+  vel.set(0, 0, 0); sim.state = ST_LANDED; sim.spool = 0; sim.rpm.fill(0); sim.pitch = sim.roll = sim.yawRate = 0; sim.thrust = sim.thrustCmd = C.G * 0.75;
+  sim.holdXZ = sim.holdY = false; pidPx.reset(); pidPz.reset(); pidPy.reset(); pidVx.reset(); pidVz.reset(); pidVy.reset();
+  vCmd.set(0, 0, 0); yawCmd = 0; pitchCmd = rollCmd = 0; auto.phase = 1; auto.until = sim.t + 1.0; auto.speed = 0; vrw.avoidY = 0; vrw.tick = 0;
+  buildQuat(quat, sim.yaw, 0, 0);
+}
+function applyWorld(vrOn) {
+  if (vrOn === world.vr) return;
+  if (vrOn) {
+    vrBuildWorld();
+    mrSave.ok = placed; mrSave.x = pos.x; mrSave.y = sim.groundY; mrSave.z = pos.z; mrSave.yaw = sim.yaw; mrSave.monOn = mon.on;
+    setMonitor(false); calCancel();
+    world.vr = true; Object.assign(P, P_VR);
+    vrSceneLook(true);
+    vrPlaceAtHome(); landHere();
+    rigS.init = false;
+    windStart();
+  } else {
+    world.vr = false; Object.assign(P, P_MR);
+    windStop();
+    vrSceneLook(false);
+    rig.position.set(0, 0, 0); rig.quaternion.identity(); rig.scale.set(1, 1, 1); rig.updateMatrixWorld(true);   // MRではrigは厳密に恒等
+    camera.position.set(0, 0, 0); camera.quaternion.identity();
+    if (mrSave.ok) { pos.set(mrSave.x, mrSave.y, mrSave.z); sim.groundY = mrSave.y; sim.yaw = mrSave.yaw; }
+    landHere();
+    if (mrSave.monOn) setMonitor(true);
+    rigS.vig = 0; vigQuad.visible = false;
+  }
+  align.jump = true;                                           // 座標系が変わった: 相手の補間バッファを捨てさせる
+  hud.hudInit = false; hud.acc = 1;
+  vrHold.fired = true;
+  if (renderer.xr.isPresenting && !hud.leftGrip) placeHud();   // 浮遊HUD (ハンドトラッキング): 親を rig ⇄ scene で付け替える (?world=vr で手だけの時など)
+}
+/** セッション開始/終了時: 完全にMRの状態へ (フェードも破棄)。 */
+function vrReset() {
+  fade.phase = 0; fade.a = 0; fade.black = 0; fade.hold = 0; fadeMat.opacity = 0; fadeQuad.visible = false; vrHold.t0 = 0; vrHold.fired = false; vrHold.step = 0;
+  world.cam = 1; rigS.init = false; rigS.vig = 0;   // 既定は三人称 (一人称より酔いにくく、機体も見える)
+  if (world.vr) { world.vr = false; Object.assign(P, P_MR); windStop(); }
+  vrSceneLook(false);
+  rig.position.set(0, 0, 0); rig.quaternion.identity(); rig.scale.set(1, 1, 1); rig.updateMatrixWorld(true);
+  camera.position.set(0, 0, 0); camera.quaternion.identity();
+  vigQuad.visible = false; vigMat.opacity = 0;
+  mrSave.ok = false;
+}
+
+/** 右スティック押込みの長押し (実時間 VR_HOLD_S)。長押し中は HUD に進捗を出す。 */
+function vrHoldUpdate(pressed) {
+  if (!pressed) { vrHold.t0 = 0; vrHold.fired = false; vrHold.step = 0; return; }
+  if (fade.phase !== 0 || cal.active) vrHold.fired = true;     // 暗転中・手動の位置合わせ中の押下は無視 (離して押し直すまで発火しない。進捗バーも出さない)
+  const now = performance.now();
+  if (!vrHold.t0) vrHold.t0 = now;
+  if (vrHold.fired) { vrHold.step = 0; return; }
+  const f = (now - vrHold.t0) / (C.VR_HOLD_S * 1000);
+  vrHold.step = Math.min(5, 1 + Math.floor(f * 5));
+  if (f >= 1) { vrHold.fired = true; vrHold.step = 0; vrRequestWorld(!world.vr); }
+}
+
+/** メインループから (毎フレーム): フェード → リグ → 空の追従 → ビネット → 風。例外はここで止める。 */
+function vrFrame(dt, now) {
+  try {
+    vrFadeStep(dt);
+    if (world.vr) {
+      vrUpdateRig(dt);
+      vrw.sky.position.copy(eyeW);
+      vrw.clouds.rotation.y = now * 0.004;
+      windUpdate(now, vel.length());
+      vrDepthRange();
+    }
+    vrUpdateOverlays(dt);
+  } catch (e) { vrFail(e); }
+}
+
+/* =====================================================================
+ * 15. 入力 (XRコントローラー / キーボード)
  * ===================================================================== */
 function shape(v) {
   const a = Math.abs(v);
@@ -1356,6 +2189,7 @@ function shape(v) {
 /** Questのスペース設定を起動 (1セッションに1回まで)。未対応・拒否は無視 */
 let roomCaptureAsked = false;
 function startRoomCapture(session) {
+  if (world.vr || fade.phase !== 0) return;                  // VR中・切替の暗転中は絶対に起動しない (周囲が見えない状態でシステムUIを出さない)
   if (roomCaptureAsked || !session || typeof session.initiateRoomCapture !== 'function') return;
   roomCaptureAsked = true;
   try { const p = session.initiateRoomCapture(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* 無視 */ }
@@ -1376,19 +2210,23 @@ function readXRInputs(session, xrFrame, ref) {
     if (s.handedness === 'left') {
       gotL = true; input.lx = shape(sx); input.ly = shape(-sy);   // 上=上昇, 右=右旋回
       if (edge('X', !!(b[4] && b[4].pressed))) toggleHud();
-      if (edge('L', !!(b[0] && b[0].pressed))) toggleMonitor();   // 左トリガー = ドローン視点モニター
-      if (edge('LS', !!(b[3] && b[3].pressed)) && planes.length === 0) startRoomCapture(session);   // 左スティック押込み = スペース設定 (平面が無い時のみ)
-      if (net.on && net.role === 'pilot') netLeftY(!!(b[5] && b[5].pressed));   // 左Y = 位置合わせの開始/中止・長押しで手動解除 (ルーム参加時のみ)
+      if (edge('L', !!(b[0] && b[0].pressed)) && !world.vr) toggleMonitor();   // 左トリガー = ドローン視点モニター (VR中は無効: モニターは部屋モデル用)
+      if (edge('LS', !!(b[3] && b[3].pressed))) {                // 左スティック押込み: VR=一人称/三人称の切替 / MR=スペース設定 (平面が無い時のみ)
+        if (fade.phase !== 0) { /* 切替の暗転中の押下は捨てる (同じ押下が切替後の世界の意味で働かないように) */ }
+        else if (world.vr) vrRequestCam(); else if (planes.length === 0) startRoomCapture(session);
+      }
+      if (net.on && net.role === 'pilot') { if (world.vr) prevBtn.Y = !!(b[5] && b[5].pressed); else netLeftY(!!(b[5] && b[5].pressed)); }   // 左Y = 位置合わせの開始/中止・長押しで手動解除 (ルーム参加時のMRのみ。VRは位置合わせ不要)
     } else if (s.handedness === 'right') {
       gotR = true; input.rx = shape(sx); input.ry = shape(-sy);   // 前=前進, 右=右移動
       if (edge('A', !!(b[4] && b[4].pressed))) toggleMode();
       if (edge('B', !!(b[5] && b[5].pressed))) toggleFlight();
       input.recall = !!(b[0] && b[0].pressed);
-      if (net.on && net.role === 'pilot') netRightController(s, b, xrFrame, ref);   // 位置合わせ中は呼び戻しを抑止し、トリガーで点を記録
+      vrHoldUpdate(!!(b[3] && b[3].pressed));                    // 右スティック押込みを VR_HOLD_S 秒長押し = MR ⇄ VR (誤操作防止の長押し)
+      if (net.on && net.role === 'pilot') { if (world.vr) prevBtn.RT = input.recall; else netRightController(s, b, xrFrame, ref); }   // 位置合わせ中は呼び戻しを抑止し、トリガーで点を記録 (MRのみ)
     }
   }
   if (!gotL) { prevBtn.X = false; prevBtn.L = false; prevBtn.Y = false; prevBtn.LS = false; }
-  if (!gotR) { prevBtn.A = false; prevBtn.B = false; prevBtn.RT = false; }
+  if (!gotR) { prevBtn.A = false; prevBtn.B = false; prevBtn.RT = false; vrHoldUpdate(false); }
   input.hasController = gotL || gotR;
 }
 
@@ -1403,7 +2241,9 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyM') toggleMode();
   else if (e.code === 'KeyT') toggleFlight();
   else if (e.code === 'KeyH') toggleHud();
-  else if (e.code === 'KeyV') toggleMonitor();
+  else if (e.code === 'KeyV') { if (!world.vr) toggleMonitor(); }
+  else if (e.code === 'KeyN') vrRequestWorld(!world.vr);    // デスクトップ: MRプレビュー ⇄ VRネイチャー
+  else if (e.code === 'KeyC') vrRequestCam();               // VR中: 一人称 ⇄ 三人称
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 function readKeyboard() {
@@ -1438,7 +2278,7 @@ function updateOrbit() {
 }
 
 /* =====================================================================
- * 15. メインループ
+ * 16. メインループ
  * ===================================================================== */
 let xrSession = null, placed = false, lastT = 0, noCtrlT = 0, autoTakeoffDone = false;
 
@@ -1463,13 +2303,26 @@ function placeDroneInitial() {
   vel.set(0, 0, 0); sim.state = ST_LANDED; sim.spool = 0; sim.rpm.fill(0);
   buildQuat(quat, sim.yaw, 0, 0);
   placed = true;
+  if (START_VR) { try { applyWorld(true); } catch (e) { vrFail(e); } }   // ?world=vr: 最初からVR (暗転なし)
 }
 
+/** フレームループの最終防壁。three の XR ループは、コールバックが例外を投げると次の requestAnimationFrame を予約しない (WebGLAnimation.onAnimationFrame) ので、
+ *  1回の例外でヘッドセットの映像が止まる。ここで必ず受け止め、VR中なら MR (パススルーが見える状態) へ戻し、描画だけは続ける。正常時は frameBody をそのまま呼ぶだけ。 */
+const frameErr = { n: 0, last: '' };
 function frame(time, xrFrame) {
+  try { frameBody(time, xrFrame); }
+  catch (e) {
+    frameErr.n++; frameErr.last = String(e && e.message || e).slice(0, 200);
+    try { if (world.vr || fade.phase !== 0) vrFail(e); } catch (e2) { /* ignore */ }
+    try { renderer.render(scene, camera); } catch (e2) { /* ignore */ }
+  }
+}
+function frameBody(time, xrFrame) {
   const now = time * 0.001;
   const dt = clamp(now - lastT, 0, 0.05); lastT = now;
   if (spec.on) { try { specFrame(dt, performance.now()); } catch (e) { net.errN++; } renderer.render(scene, camera); return; }   // PC観戦モード: 自機なし。更新が失敗しても描画は続ける
   const xr = renderer.xr.isPresenting;
+  frameDt = dt;
 
   // --- 入力・頭位置・平面 ---
   if (xr) {
@@ -1479,7 +2332,7 @@ function frame(time, xrFrame) {
       readXRInputs(xrSession, xrFrame, ref);
     }
   } else {
-    readKeyboard(); updateOrbit();
+    readKeyboard(); if (!world.vr) updateOrbit();            // デスクトップVRのカメラは vrUpdateRig が決める (一人称/三人称)
     head.pos.set(0, 1.6, 0); head.quat.identity(); head.fwd.set(0, 0, -1); head.fwdH.set(0, 0, -1); head.valid = true;
   }
   if (!placed && head.valid) placeDroneInitial();
@@ -1525,25 +2378,31 @@ function frame(time, xrFrame) {
   // ブロブシャドウ
   const h = Math.max(0, pos.y - sim.groundY);
   shadow.visible = h < 2.2;
-  shadow.position.set(pos.x, sim.groundY + 0.004, pos.z);
+  if (world.vr) {                                            // 地形の面に沿わせる (斜面でも影が地面に埋もれない)
+    const gy = vrGround(pos.x, pos.z); shadow.position.set(pos.x, gy + 0.03, pos.z);
+    tmpV.set(vrw.nx, vrw.ny, vrw.nz); shadow.quaternion.setFromUnitVectors(Y_AXIS, tmpV);
+  } else shadow.position.set(pos.x, sim.groundY + 0.004, pos.z);
   const ss = 0.34 + h * 0.2; shadow.scale.set(ss, 1, ss);
   shadowMat.opacity = 0.6 * clamp(1 - h / 2.2, 0, 1);
-  shadowBias.value = xr && renderer.xr.hasDepthSensing() ? C.SHADOW_DEPTH_BIAS : 0;
+  shadowBias.value = xr && !world.vr && renderer.xr.hasDepthSensing() ? C.SHADOW_DEPTH_BIAS : 0;   // VR中は深度メッシュを描かない → 影を手前へずらす必要なし
 
+  drone.visible = !(world.vr && world.cam === 0);            // 一人称では自機モデルを描かない (影は残す)
+  if (world.vr || fade.phase !== 0 || fadeQuad.visible || vigQuad.visible) vrFrame(dt, now);   // MRで切替が無い間は何もしない
   if (net.on) { try { netFrame(avg); } catch (e) { netPanic(); } }   // ルーム参加中のみ: 送信・他機の表示・音。失敗してもフレームループは止めない (ソロへ)
-  desk.visible = !xr;
+  desk.visible = !xr && !world.vr;
   hudMesh.visible = sim.hudOn;
   updateHud(dt); updateHudFloat();
   updateMonitor(dt);                                         // ドローン視点を (30Hz上限で) RTへ描く: メイン描画の前
-  if (xr) updateAudio(avg, now, head.pos, head.quat); else updateAudio(avg, now, camera.position, camera.quaternion);
+  if (world.vr) updateAudio(avg, now, eyeW, eyeQ); else if (xr) updateAudio(avg, now, head.pos, head.quat); else updateAudio(avg, now, camera.position, camera.quaternion);
   renderer.render(scene, camera);
 }
 let acc = 0;
 
 /* =====================================================================
- * 16. セッション管理
+ * 17. セッション管理
  * ===================================================================== */
 function resetWorld() {
+  vrReset();                                               // 常にMRの状態から始める (リグ恒等・霧なし・MR照明・深度メッシュ復帰・風の停止)
   placed = false; acc = 0; sim.state = ST_LANDED; sim.mode = MODE_AUTO; sim.spool = 0; sim.rpm.fill(0);
   sim.pitch = sim.roll = sim.yawRate = 0; sim.holdXZ = sim.holdY = false;
   planes.length = 0; planeMap.clear(); planeFeature = false; roomTimer = 0; head.valid = false; hud.hudInit = false;
@@ -1599,11 +2458,15 @@ async function startXR(roomName) {
   startEl.classList.add('hidden');
   placeHud();
   renderer.setAnimationLoop(frame);
+  try {                                                      // リセンター (local-floor の原点・向きが変わる): VR中なら視点を作り直す (向いている方向を機首方向に取り直す)
+    const rs0 = renderer.xr.getReferenceSpace();
+    if (rs0 && typeof rs0.addEventListener === 'function') rs0.addEventListener('reset', () => { if (world.vr) rigS.init = false; });
+  } catch (e) { /* ignore */ }
   if (roomName) {                                            // ルーム参加は非同期・失敗してもソロ飛行は続く
     try {
       net.retryN = 0;
       const pj = netJoin(roomName, 'pilot'); if (pj && pj.catch) pj.catch(() => {});
-      if (wantShared) netInitShared(session);
+      if (wantShared && !sharedBlocked) netInitShared(session); else sharedDiag('none', 'retry-without-shared');   // (iii) 'shared' を外して開始した (このページでは以後も付けない)
       const rs = renderer.xr.getReferenceSpace();              // リセンター検出 (手動の位置合わせが無効になる)
       if (rs && typeof rs.addEventListener === 'function') rs.addEventListener('reset', () => { try { netOnLocalReset(); } catch (e) { /* ignore */ } });
     } catch (e) { /* ignore */ }
@@ -1632,7 +2495,7 @@ window.addEventListener('resize', () => {
 });
 
 /* =====================================================================
- * 17. マルチプレイ (任意)  ルーム名が指定された時だけ動く。ソロでは net.on=false のまま、通信も PeerJS の読み込みも一切行わない。
+ * 18. マルチプレイ (任意)  ルーム名が指定された時だけ動く。ソロでは net.on=false のまま、通信も PeerJS の読み込みも一切行わない。
  *   ・WebRTCメッシュ (PeerJS 1.5.4, 既定のシグナリングサーバー)。ピアID = mrdrone1-<ルーム名のハッシュ>-<スロット0..23>。
  *   ・各ペアに DataConnection は1本だけ (serialization:'raw' = 文字列JSON)。メタ(hello/gossip/平面/ping)も20Hzの状態も同じ1本で送る。
  *     チャネルは「順不同・再送あり」(PeerJS の reliable:false)。PeerJS 1.5.4 は createDataChannel へ {ordered: !!reliable} しか渡さず、
@@ -1659,7 +2522,7 @@ const net = {
   notice: '', noticeUntil: 0, nConn: 0, nSpec: 0, unaligned: 0, planesTxAt: 0, planesTxRev: -1, planesTxSig: '',
   perfMs: 0, perfN: 0, rxCount: 0, rxBad: 0, frameT: 0,
   lost: new Map(), tickAt: 0, retryTimer: 0, retryN: 0, errN: 0,
-  nNone: 0, nOther: 0, nWait: 0, nDiff: 0,                      // 位置合わせが合っていない他パイロットの内訳 (HUD用)
+  nNone: 0, nOther: 0, nWait: 0, nDiff: 0, nWorld: 0,           // 位置合わせが合っていない他パイロットの内訳 (HUD用) / 別ワールド(MR⇄VR)にいる台数
   aud: [], audN: 0, planesRev: 0,
 };
 const dbg = { freeze: false, preTx: null, postNet: null };    // ?debug のテスト用: シミュレーション停止 / 送信直前・受信側描画直後のフック
@@ -1678,7 +2541,9 @@ const _xq = new THREE.Quaternion();
 function xfQuat(T, out, q) { _xq.setFromAxisAngle(Y_AXIS, T.yaw).multiply(q); return out.copy(_xq); }
 
 const align = { kind: NET_KIND_NONE, id: '', forced: false, rev: 0, jump: false };   // 自分の位置合わせの記述子 (相手へ送る)。rev: 座標系が不連続に変わるたびに+1
-const sharedSp = { space: null, uuid: '', valid: false, yaw: 0, tx: 0, ty: 0, tz: 0, err: 0 };   // Quest共有スペース (experimental)
+const sharedSp = { space: null, uuid: '', valid: false, yaw: 0, tx: 0, ty: 0, tz: 0, err: 0, diag: '', why: '' };   // Quest共有スペース (experimental)。diag: このセッションでの試行結果 ''=対象外(ソロ) 'none'=共有機能なし 'wait'=共有待機中 'ok'=確立 / why: その理由 (?debug 用)
+const SHARED_DIAG_TXT = { none: '共有機能なし', wait: '共有待機中', ok: '' };
+function sharedDiag(d, why) { sharedSp.diag = d; sharedSp.why = why || ''; }
 const cal = {                                                  // 手動2点キャリブレーション
   active: false, step: 0, p: [new THREE.Vector3(), new THREE.Vector3()], live: new THREE.Vector3(), liveOk: false,
   msg: '', msgUntil: 0, recT: [0, 0], lockRecall: false, mk: null, mkUntil: 0, yDown: 0, yLong: false,
@@ -1788,13 +2653,21 @@ const cleanId = (v) => (typeof v === 'string' ? v.slice(0, 64).replace(/[^0-9A-Z
 const sharedUuid = (sp) => { let v = ''; try { v = sp.uuid || sp.UUID || sp.id || ''; } catch (e) { v = ''; } return cleanId(v); };   // 説明書きでは「UUID文字列を持つ」。プロパティ名の揺れに備える
 async function netInitShared(session) {
   try {
-    if (typeof session.requestReferenceSpace !== 'function') return;
-    const sp = await Promise.race([session.requestReferenceSpace('shared'), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))]);
-    if (!sp || xrSession !== session) return;
+    // (i) セッションが 'shared' を許可したか。enabledFeatures が無い環境では分からないので、そのまま要求してみる。
+    let granted = null;
+    try { const ef = session.enabledFeatures; if (ef && typeof ef.includes === 'function') granted = ef.includes('shared'); } catch (e) { granted = null; }
+    sharedDiag(granted === false ? 'none' : 'wait', granted === false ? 'not-enabled' : 'requesting');
+    if (typeof session.requestReferenceSpace !== 'function') { sharedDiag('none', 'no-api'); return; }
+    let sp = null;
+    try { sp = await Promise.race([session.requestReferenceSpace('shared'), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 4000))]); }
+    catch (e) { if (xrSession === session) sharedDiag('none', granted === false ? 'not-enabled' : (e && e.message === 'timeout' ? 'request-timeout' : 'request-rejected')); return; }
+    if (xrSession !== session) return;
+    if (!sp) { sharedDiag('none', 'request-null'); return; }
+    sharedDiag('wait', 'no-pose');                             // (ii) スペースは得た: 姿勢とUUIDが取れるまで待機中 (netSharedPose が 'ok' にする)
     sharedSp.space = sp; sharedSp.uuid = ''; sharedSp.valid = false; sharedSp.err = 0;
     // reset: 他のヘッドセットと同じスペースが確立した時などに発火し、座標系とUUIDが新しくなる。次のフレームで取り直す (valid=false → スナップ)。
-    if (typeof sp.addEventListener === 'function') sp.addEventListener('reset', () => { sharedSp.valid = false; });
-  } catch (e) { sharedSp.space = null; }                       // 未対応/拒否: 共有スペースなし (手動のみ)
+    if (typeof sp.addEventListener === 'function') sp.addEventListener('reset', () => { sharedSp.valid = false; if (sharedSp.space === sp) sharedDiag('wait', 'reset'); });
+  } catch (e) { sharedSp.space = null; sharedDiag('none', 'error'); }   // 未対応/拒否: 共有スペースなし (手動のみ)
 }
 /** 毎フレーム: frame.getPose(shared, localFloor) = 「共有スペース→自分のlocal-floor」の姿勢 (p_local = M * p_shared) を取り、
  *  yaw と水平の平行移動だけ取り出して sharedFromLocal (その逆変換) を作る。null/例外なら直前の良い値を保つ。
@@ -1808,8 +2681,8 @@ function netSharedPose(xrFrame, ref) {
   const sp = sharedSp.space;
   if (!sp) return;
   let pose = null;
-  try { pose = xrFrame.getPose(sp, ref); } catch (e) { if (++sharedSp.err > 20) { sharedSp.space = null; sharedSp.valid = false; } return; }
-  if (!pose || !pose.transform || !pose.transform.matrix) return;
+  try { pose = xrFrame.getPose(sp, ref); } catch (e) { if (++sharedSp.err > 20) { sharedSp.space = null; sharedSp.valid = false; sharedDiag('none', 'pose-error'); } return; }
+  if (!pose || !pose.transform || !pose.transform.matrix) { if (!sharedSp.valid) sharedDiag('wait', 'no-pose'); return; }
   const m = pose.transform.matrix;
   for (let i = 0; i < 16; i++) if (!Number.isFinite(m[i])) return;
   let phi;                                                     // localFromShared = Ry(phi) + t_l
@@ -1817,7 +2690,7 @@ function netSharedPose(xrFrame, ref) {
   else if (Math.hypot(m[8], m[10]) > 0.3) phi = Math.atan2(m[8], m[10]);  // Z軸の像から
   else return;
   const uuid = sharedUuid(sp);
-  if (!uuid) { sharedSp.valid = false; return; }
+  if (!uuid) { sharedSp.valid = false; sharedDiag('wait', 'no-uuid'); return; }
   const th = -phi, c = Math.cos(th), s = Math.sin(th);        // sharedFromLocal: shared = Ry(th) * (local - t_l)
   const tx = -(c * m[12] + s * m[14]), tz = -(-s * m[12] + c * m[14]);
   const dy = angleDiff(th, sharedSp.yaw), dx = tx - sharedSp.tx, dz = tz - sharedSp.tz;
@@ -1825,12 +2698,13 @@ function netSharedPose(xrFrame, ref) {
     sharedSp.yaw = th; sharedSp.tx = tx; sharedSp.tz = tz; align.jump = true;
   } else { sharedSp.yaw += dy * 0.15; sharedSp.tx += dx * 0.15; sharedSp.tz += dz * 0.15; }
   sharedSp.ty = 0; sharedSp.uuid = uuid; sharedSp.valid = true;
+  if (sharedSp.diag !== 'ok') sharedDiag('ok', '');
 }
-function netXrFrame(xrFrame, ref) { try { if (sharedSp.space) netSharedPose(xrFrame, ref); } catch (e) { sharedSp.space = null; sharedSp.valid = false; } }
+function netXrFrame(xrFrame, ref) { try { if (sharedSp.space) netSharedPose(xrFrame, ref); } catch (e) { sharedSp.space = null; sharedSp.valid = false; sharedDiag('none', 'error'); } }
 
 function netSessionReset() {                                   // XRセッションの開始/終了ごと: local-floor原点が変わるので位置合わせは破棄
   calCancel(); cal.manual.valid = false; cal.lockRecall = false; cal.liveOk = false;
-  sharedSp.space = null; sharedSp.valid = false; sharedSp.uuid = ''; sharedSp.err = 0;
+  sharedSp.space = null; sharedSp.valid = false; sharedSp.uuid = ''; sharedSp.err = 0; sharedDiag('', '');
   prevBtn.Y = prevBtn.RT = false;
   cal.yDown = 0; align.jump = true;
   if (!align.forced) { align.kind = NET_KIND_NONE; align.id = ''; setSharedFromLocal(0, 0, 0, 0); }
@@ -1955,6 +2829,7 @@ function netStartPeer(peer, slot, gen) {
   net.peer = peer; net.slot = slot; net.ready = true; net.sid = Math.random().toString(36).slice(2, 10); net.seq = 0; net.reconnectN = 0; net.retryN = 0;
   netSetStatus('ready');
   if (net.role === 'pilot') setDroneColor(drone, PALETTE[slot % PALETTE.length]);
+  if (world.vr && net.role === 'pilot') { if (sim.state === ST_LANDED) vrPlaceAtHome(); else { vrHomeFor(slot, world.home); world.home.y = vrGroundMax(world.home.x, world.home.z); } }   // VRで先に始めていた: スロットが決まったので自分のパッドへ (飛行中は帰還先だけ更新)
   peer.on('connection', (c) => { try { if (net.peer === peer) netOnIncoming(c); else c.close(); } catch (e) { /* ignore */ } });
   peer.on('open', () => { if (net.peer === peer) { net.reconnectN = 0; if (net.status === 'reconnecting') netSetStatus('ready'); netRescan(); } });   // シグナリング再接続後: 切れていた間に見失った相手を探し直す
   peer.on('disconnected', () => { if (net.peer === peer) { netSetStatus('reconnecting'); net.reconnectAt = performance.now() + 500; } });   // P2Pは生きたまま。シグナリングだけ再接続
@@ -1995,7 +2870,7 @@ function netLeave(sync) {
   for (const ps of net.list.slice()) disposePs(ps);
   net.peers.clear(); net.list.length = 0; net.tried.clear(); net.scanQ.length = 0; net.pending.clear(); net.lost.clear();
   net.peer = null; net.ready = false; net.slot = -1; net.on = false; net.status = 'idle'; net.unaligned = 0; net.nConn = net.nSpec = 0; net.txAcc = 0;
-  net.nNone = net.nOther = net.nWait = net.nDiff = 0; net.aud.length = 0; net.audN = 0; raud.chosen[0] = raud.chosen[1] = raud.chosen[2] = null;
+  net.nNone = net.nOther = net.nWait = net.nDiff = net.nWorld = 0; net.aud.length = 0; net.audN = 0; raud.chosen[0] = raud.chosen[1] = raud.chosen[2] = null;
   calCancel(); cal.lockRecall = false;
   if (drone && drone.userData.ring) setDroneColor(drone, null);
   remoteAudioStop();
@@ -2006,7 +2881,7 @@ function newPs(slot) {
   return {
     slot, role: '', sid: '', conn: null, lastMsg: 0, closedAt: 0, rtt: -1, seq: -1, lastState: 0, hasState: false,
     kind: 0, id: '', buf: new Float64Array(SNAP_N * SNAP_STRIDE), n: 0, w: 0, off: 0, hasOff: false,
-    mode: 0, st: 0, rpm: 0, h: 0, spd: 0, ex: false, popx: 0, popy: 0, popz: 0,
+    mode: 0, world: 0, st: 0, rpm: 0, h: 0, spd: 0, ex: false,   // world: 相手がいる世界 0=MR 1=VR popx: 0, popy: 0, popz: 0,
     sp: new THREE.Vector3(), sq: new THREE.Quaternion(), sh: new THREE.Vector3(), shYaw: 0, srpm: 0,     // 補間結果 (共有座標)
     drone: null, fade: 0, shown: false, dist: 1e9, monD: null, monU: null, user: null, specAl: true, row: null,
     planes: null, plRev: -1, plN: 0, plGot: 0, plTmp: null, planesVer: 0, plKind: 0, plId: '', rowSig: '',
@@ -2190,10 +3065,11 @@ function rxGossip(ps, m) {
   return true;
 }
 function rxState(ps, m) {
-  if ((m.length !== 21 && m.length !== 22) || ps.role === 'spectator') return false;
+  if (m.length < 21 || m.length > 23 || ps.role === 'spectator') return false;
   for (let i = 1; i <= 20; i++) if (i !== 18 && !isNum(m[i])) return false;
   if (typeof m[18] !== 'string' || m[18].length > 64 || !isInt(m[1], 0, 2147483647) || !isInt(m[11], 0, 3) || !isInt(m[12], 0, 1) || !isInt(m[17], 0, 2)) return false;
-  if (m.length === 22 && !isInt(m[21], 0, 2147483647)) return false;
+  if (m.length >= 22 && !isInt(m[21], 0, 2147483647)) return false;
+  if (m.length === 23 && !isInt(m[22], 0, 1)) return false;   // 相手の世界 0=MR 1=VR
   if (!(m[2] >= 0 && m[2] < 1e13)) return false;                              // 送信側時計 [ms]: 常識的な範囲だけ (巨大値でオフセット計算が発散しないように)
   const ql = Math.hypot(m[6], m[7], m[8], m[9]);
   if (!(ql > 0.5 && ql < 1.5)) return false;
@@ -2202,21 +3078,22 @@ function rxState(ps, m) {
   if (ps.seq >= 0 && seq < ps.seq - 200) resetStream(ps);                    // 相手が作り直した (番号が大きく戻った)
   ps.seq = seq; ps.role = 'pilot';
   // 座標系の不連続 (相手の align.rev / 方式 / UUID が変わった): 旧座標系の記録と補間しない
-  const ep = m.length === 22 ? m[21] : 0;
+  const ep = m.length >= 22 ? m[21] : 0, wd = m.length === 23 ? m[22] : 0;
   let flush = ps.ep !== ep; ps.ep = ep;
+  if (wd !== ps.world) { ps.world = wd; flush = true; }       // 相手が世界を切り替えた: 座標系が別物なので補間バッファを捨てる (位置合わせの切替と同じ仕組み)
   if (m[17] !== ps.kind || m[18] !== ps.idRaw) { ps.idRaw = m[18]; if (setPeerAlign(ps, m[17], cleanId(m[18]))) flush = true; }
   const now = ps.lastMsg, d = now - m[2];
   if (!ps.hasOff) { ps.off = d; ps.hasOff = true; }
   else if (d - ps.off > C.NET_LOST_MS || d - ps.off < -1000) { ps.off = d; flush = true; }   // 時計が飛んだ (相手/自分の端末がスリープしていた等): ゆっくり追従せず即合わせ直す
   else ps.off += (d - ps.off) * (d < ps.off ? 0.25 : 0.01);
   if (flush) flushSnaps(ps);   // 時計オフセット: 速いパケットへは素早く(でも1発の外れ値では飛ばない)、遅い側へはゆっくり追従 = 概ね最速パケット基準でジッタを吸収
-  const b = ps.buf, S = SNAP_STRIDE, o = ps.w * S, P = C.NET_MAX_POS;
+  const b = ps.buf, S = SNAP_STRIDE, o = ps.w * S, PM = ps.world === 1 ? C.NET_MAX_POS_VR : C.NET_MAX_POS;
   let t = m[2] + ps.off;
   if (ps.n > 0) { const pt = b[((ps.w - 1 + SNAP_N) % SNAP_N) * S]; if (t <= pt) t = pt + 1; }
   b[o] = t;
-  b[o + 1] = clamp(m[3], -P, P); b[o + 2] = clamp(m[4], -P, P); b[o + 3] = clamp(m[5], -P, P);
+  b[o + 1] = clamp(m[3], -PM, PM); b[o + 2] = clamp(m[4], -PM, PM); b[o + 3] = clamp(m[5], -PM, PM);
   b[o + 4] = m[6] / ql; b[o + 5] = m[7] / ql; b[o + 6] = m[8] / ql; b[o + 7] = m[9] / ql;
-  b[o + 8] = clamp(m[13], -P, P); b[o + 9] = clamp(m[14], -P, P); b[o + 10] = clamp(m[15], -P, P); b[o + 11] = clamp(m[16], -10, 10);
+  b[o + 8] = clamp(m[13], -PM, PM); b[o + 9] = clamp(m[14], -PM, PM); b[o + 10] = clamp(m[15], -PM, PM); b[o + 11] = clamp(m[16], -10, 10);
   b[o + 12] = clamp(m[10], 0, 30000);
   ps.w = (ps.w + 1) % SNAP_N; if (ps.n < SNAP_N) ps.n++;
   ps.rpm = b[o + 12]; ps.st = m[11]; ps.mode = m[12]; ps.h = clamp(m[19], -1000, 100000); ps.spd = clamp(m[20], 0, 10000);
@@ -2225,23 +3102,30 @@ function rxState(ps, m) {
 }
 
 /* ---- 状態の送信 (20Hz) ---- */
-const txBuf = new Array(22); txBuf[0] = 's';
+const txBuf = new Array(23); txBuf[0] = 's';
 const _tp = new THREE.Vector3(), _tq = new THREE.Quaternion(), _th = new THREE.Vector3();
 const r3 = (v) => Math.round(v * 1000) / 1000;
 function netTxState(nowMs, avgRpm) {
   if (net.role !== 'pilot' || !net.ready || net.txPause || !placed) return;
   if (dbg.preTx) dbg.preTx(nowMs);
-  xfPoint(sFL, _tp, drone.position.x, drone.position.y, drone.position.z);
-  xfQuat(sFL, _tq, drone.quaternion);
-  const hv = head.valid ? head.pos : drone.position, hf = head.valid ? head.fwdH : tmpV.set(0, 0, -1);
-  xfPoint(sFL, _th, hv.x, hv.y, hv.z);
+  let hyaw;
+  if (world.vr) {                                            // VR: 全員共通のワールド座標をそのまま送る (位置合わせ不要)。頭 = 目の位置・向き
+    _tp.copy(drone.position); _tq.copy(drone.quaternion); _th.copy(eyeW);
+    tmpV.set(0, 0, -1).applyQuaternion(eyeQ); hyaw = Math.atan2(-tmpV.x, -tmpV.z);
+  } else {
+    xfPoint(sFL, _tp, drone.position.x, drone.position.y, drone.position.z);
+    xfQuat(sFL, _tq, drone.quaternion);
+    const hv = head.valid ? head.pos : drone.position, hf = head.valid ? head.fwdH : tmpV.set(0, 0, -1);
+    xfPoint(sFL, _th, hv.x, hv.y, hv.z);
+    hyaw = Math.atan2(-hf.x, -hf.z) + sFL.yaw;
+  }
   const a = txBuf;
   a[1] = ++net.seq; a[2] = Math.round(nowMs);
   a[3] = r3(_tp.x); a[4] = r3(_tp.y); a[5] = r3(_tp.z);
   a[6] = r3(_tq.x); a[7] = r3(_tq.y); a[8] = r3(_tq.z); a[9] = r3(_tq.w);
   a[10] = Math.round(avgRpm); a[11] = sim.state; a[12] = sim.mode;
-  a[13] = r3(_th.x); a[14] = r3(_th.y); a[15] = r3(_th.z); a[16] = r3(angleDiff(Math.atan2(-hf.x, -hf.z) + sFL.yaw, 0));
-  a[17] = align.kind; a[18] = align.id; a[19] = Math.round((pos.y - sim.groundY) * 100); a[20] = Math.round(vel.length() * 10); a[21] = align.rev;
+  a[13] = r3(_th.x); a[14] = r3(_th.y); a[15] = r3(_th.z); a[16] = r3(angleDiff(hyaw, 0));
+  a[17] = align.kind; a[18] = align.id; a[19] = Math.round((pos.y - sim.groundY) * 100); a[20] = Math.round(vel.length() * 10); a[21] = align.rev; a[22] = world.vr ? 1 : 0;
   const str = JSON.stringify(a), L = net.list;
   net.txCount++;
   for (let i = 0; i < L.length; i++) {
@@ -2352,7 +3236,7 @@ function netTickBody() {
 function netHudSig() {
   const now = performance.now();
   if (net.notice && now >= net.noticeUntil) net.notice = '';
-  return net.on + '|' + net.status + '|' + net.slot + '|' + net.nConn + '|' + net.nSpec + '|' + align.kind + '|' + align.id + '|' + net.nNone + '|' + net.nOther + '|' + net.nWait + '|' + net.nDiff + '|' + net.unaligned + '|'
+  return net.on + '|' + net.status + '|' + net.slot + '|' + net.nConn + '|' + net.nSpec + '|' + align.kind + '|' + align.id + '|' + net.nNone + '|' + net.nOther + '|' + net.nWait + '|' + net.nDiff + '|' + net.nWorld + '|' + (world.vr ? 1 : 0) + '|' + net.unaligned + '|' + sharedSp.diag + '|'
     + (cal.active ? cal.step + 1 : 0) + '|' + (cal.msg && now < cal.msgUntil ? cal.msg : '') + '|' + net.notice + '|' + net.room;
 }
 
@@ -2370,7 +3254,7 @@ function sampleRemote(ps, rt, dt) {
       const o0 = ((i1 - 1 + N) % N) * S, d = (b[o1] - b[o0]) / 1000;
       if (d > 0.005 && d < 0.5) {
         vx = (b[o1 + 1] - b[o0 + 1]) / d; vy = (b[o1 + 2] - b[o0 + 2]) / d; vz = (b[o1 + 3] - b[o0 + 3]) / d;
-        const sp = Math.hypot(vx, vy, vz); if (sp > 8) { const k = 8 / sp; vx *= k; vy *= k; vz *= k; }
+        const sp = Math.hypot(vx, vy, vz), vmax = ps.world === 1 ? 20 : 8; if (sp > vmax) { const k = vmax / sp; vx *= k; vy *= k; vz *= k; }
       }
     }
     px = b[o1 + 1] + vx * e; py = b[o1 + 2] + vy * e; pz = b[o1 + 3] + vz * e; ex = true;
@@ -2440,7 +3324,8 @@ const _rp = new THREE.Vector3(), _rq = new THREE.Quaternion(), _rh = new THREE.V
 function netUpdateRemotes(nowMs, dt) {
   const spectator = net.role === 'spectator', L = net.list, rt = nowMs - C.NET_INTERP_MS, stp = dt / C.NET_FADE_S;
   const myCm = align.kind === NET_KIND_MANUAL ? Math.round(cal.manual.d * 100) : -1;
-  let unal = 0, nConn = 0, nSpec = 0, nNone = 0, nOther = 0, nWait = 0, nDiff = 0;
+  let unal = 0, nConn = 0, nSpec = 0, nNone = 0, nOther = 0, nWait = 0, nDiff = 0, nWorld = 0;
+  const myW = spectator ? spec.world : (world.vr ? 1 : 0);        // 自分(観戦なら表示中)の世界
   net.audN = 0;
   for (let i = 0; i < L.length; i++) {
     const ps = L[i], open = ps.conn && ps.conn.open && nowMs - ps.lastMsg < C.NET_LOST_MS;   // 「接続」= 開いていて、かつ最近何か届いている
@@ -2449,15 +3334,17 @@ function netUpdateRemotes(nowMs, dt) {
     if (!ps.hasState) continue;
     const live = nowMs - ps.lastState < C.NET_LOST_MS;
     ps.fade = clamp(ps.fade + (live ? stp : -stp), 0, 1);
-    const aligned = spectator ? true : isAlignedWith(ps.kind, ps.id);
+    const sameW = ps.world === myW;                                              // 別ワールド (MR⇄VR) の機体は互いに見えない
+    const aligned = spectator ? sameW : sameW && (myW === 1 || isAlignedWith(ps.kind, ps.id));   // VR同士は位置合わせ不要 (固定シードの同一世界・座標をそのまま交換)
     if (!spectator && live) {
-      if (!aligned) {
+      if (!sameW) nWorld++;
+      else if (!aligned) {
         unal++;
         if (ps.kind === NET_KIND_NONE) nNone++;                                  // 相手がまだ位置合わせしていない
         else if (align.kind === NET_KIND_NONE) { /* 自分がまだ: HUDの案内は「Yボタンで位置合わせ」 */ }
         else if (ps.kind !== align.kind) nOther++;                               // 方式が違う (自動 と 手動)
         else nWait++;                                                            // 両方自動だが共有スペースのUUIDが違う (確立待ち/別の部屋)
-      } else if (myCm >= 0 && ps.calD >= 0 && Math.abs(ps.calD - myCm) > 15) nDiff++;   // 手動同士だが2点間の距離が15cm以上違う = 別の点に触れた疑い
+      } else if (myW === 0 && myCm >= 0 && ps.calD >= 0 && Math.abs(ps.calD - myCm) > 15) nDiff++;   // 手動同士だが2点間の距離が15cm以上違う = 別の点に触れた疑い
     }
     ps.shown = aligned && ps.fade > 0;
     if (!ps.shown) {                                          // 隠す (位置合わせ待ち / フェード完了)
@@ -2469,7 +3356,7 @@ function netUpdateRemotes(nowMs, dt) {
     }
     sampleRemote(ps, rt, dt);
     let hy;
-    if (spectator) { _rp.copy(ps.sp); _rq.copy(ps.sq); _rh.copy(ps.sh); hy = ps.shYaw; }
+    if (spectator || myW === 1) { _rp.copy(ps.sp); _rq.copy(ps.sq); _rh.copy(ps.sh); hy = ps.shYaw; }   // 観戦=共有座標 / VR=ワールド座標そのまま
     else {
       xfPoint(lFS, _rp, ps.sp.x, ps.sp.y, ps.sp.z); xfQuat(lFS, _rq, ps.sq);
       xfPoint(lFS, _rh, ps.sh.x, ps.sh.y, ps.sh.z); hy = ps.shYaw + lFS.yaw;
@@ -2480,12 +3367,27 @@ function netUpdateRemotes(nowMs, dt) {
     u.bodyMat.opacity = u.accentMat.opacity = u.ringMat.opacity = a; u.tagMat.opacity = ps.fade * (dim < 1 ? 0.6 : 1);
     const blur = smoothstep(ps.srpm, 300, 1800);
     u.discMat.opacity = 0.22 * blur * a; u.disc.visible = blur > 0.01;
-    const ground = spectator ? spec.floorY : surfaceHeightAt(_rp.x, _rp.y, _rp.z), h = Math.max(0, _rp.y - ground);
-    u.shadow.visible = h < 2.2; u.shadow.position.y = ground - _rp.y + 0.004;
-    const ss = 0.34 + h * 0.2; u.shadow.scale.set(ss, 1, ss); u.shMat.opacity = 0.6 * clamp(1 - h / 2.2, 0, 1) * a;
+    const ground = myW === 1 ? vrGround(_rp.x, _rp.z) : spectator ? spec.floorY : surfaceHeightAt(_rp.x, _rp.y, _rp.z), h = Math.max(0, _rp.y - ground);
+    let ms = 1;                                               // VRは広い世界: 遠い機体ほど大きく描いて見失わない (1倍@10m以内 → 4倍@100m以上)。タグも遠くでは一定の見かけの大きさ
+    if (myW === 1) {
+      const dd = spectator ? Math.hypot(_rp.x - camera.position.x, _rp.y - camera.position.y, _rp.z - camera.position.z) : Math.hypot(_rp.x - eyeW.x, _rp.y - eyeW.y, _rp.z - eyeW.z);
+      if (spectator) { ms = clamp(dd / 20, 1, 12); u.model.scale.setScalar(1.6 * ms); u.tag.position.y = 0.36 * ms; }
+      else {
+        ms = 1 + 3 * smoothstep(dd, 10, 100); u.model.scale.setScalar(ms);
+        const k = Math.max(1, dd / 6); u.tag.scale.set(0.18 * k, 0.18 * k, 1); u.tag.position.y = 0.24 * Math.max(ms, k);
+      }
+      u.shadow.quaternion.setFromUnitVectors(Y_AXIS, tmpV.set(vrw.nx, vrw.ny, vrw.nz)); u.vr = true; u.dd = dd;
+    } else if (u.vr) {                                        // MRへ戻った: 見た目を元に
+      u.vr = false; u.model.scale.setScalar(spectator ? 1.6 : 1); u.tag.scale.set(spectator ? 0.05 : 0.18, spectator ? 0.05 : 0.18, 1); u.tag.position.y = spectator ? 0.36 : 0.24; u.shadow.quaternion.identity();
+    }
+    u.shadow.visible = h < 2.2 * ms; u.shadow.position.y = ground - _rp.y + (myW === 1 ? 0.03 : 0.004);
+    const ss = (0.34 + h * 0.2) * ms; u.shadow.scale.set(ss, 1, ss); u.shMat.opacity = 0.6 * clamp(1 - h / (2.2 * ms), 0, 1) * a;
     if (spectator) {
-      if (!ps.user) ps.user = makeUserMarker(PALETTE[ps.slot % PALETTE.length], 0, scene, true);
-      updateUserMarker(ps.user, _rh, hy, spec.floorY, 0.5 * a);
+      if (myW === 1) { if (ps.user) ps.user.g.visible = false; }   // VR観戦: 頭のマーカーは出さない (広い世界では邪魔)
+      else {
+        if (!ps.user) ps.user = makeUserMarker(PALETTE[ps.slot % PALETTE.length], 0, scene, true);
+        updateUserMarker(ps.user, _rh, hy, spec.floorY, 0.5 * a);
+      }
     } else {
       if (mon.on) {                                           // ドローン視点モニター用の簡易マーカー (monScene, layer 3, ライト不要)
         if (!ps.monD) {
@@ -2496,11 +3398,11 @@ function netUpdateRemotes(nowMs, dt) {
         ps.monD.visible = true; ps.monD.position.set(_rp.x, _rp.y + 0.07, _rp.z); ps.monD.quaternion.copy(_rq);
         updateUserMarker(ps.monU, _rh, hy, room.floorY, 1);
       } else { if (ps.monD) ps.monD.visible = false; if (ps.monU) ps.monU.g.visible = false; }
-      ps.dist = head.valid ? Math.hypot(_rp.x - head.pos.x, _rp.y - head.pos.y, _rp.z - head.pos.z) : 99;
+      ps.dist = myW === 1 ? u.dd : head.valid ? Math.hypot(_rp.x - head.pos.x, _rp.y - head.pos.y, _rp.z - head.pos.z) : 99;
       net.aud[net.audN++] = ps;
     }
   }
-  net.unaligned = unal; net.nConn = nConn; net.nSpec = nSpec; net.nNone = nNone; net.nOther = nOther; net.nWait = nWait; net.nDiff = nDiff;
+  net.unaligned = unal; net.nConn = nConn; net.nSpec = nSpec; net.nNone = nNone; net.nOther = nOther; net.nWait = nWait; net.nDiff = nDiff; net.nWorld = nWorld;
 }
 
 /* ---- 他機のプロペラ音 (最も近い3機まで。軽量ボイス: ノコギリ波2本 + LPF + 3D) ---- */
@@ -2585,7 +3487,7 @@ function netFrame(avgRpm) {
 }
 
 /* =====================================================================
- * 18. PC観戦モード (ルーム指定 + immersive-ar 非対応の端末)
+ * 19. PC観戦モード (ルーム指定 + immersive-ar 非対応の端末)
  *   自機なし・キーボード操縦なし。共有座標系 (= 恒等) にそのまま全員のドローンを描く。
  *   部屋モデルは「基準グループ」の最小スロットのパイロットが送った平面から。無ければ床グリッド。
  * ===================================================================== */
@@ -2593,10 +3495,12 @@ const spec = {
   on: false, follow: -1, top: false, savedPh: 0.5, fitted: false, floorY: 0, acc: 1, rm: null, grid: null, gridSize: 0,
   refSlot: -1, refVer: -1, refKey: '', hasPlanes: false, el: null, hd: null, st: null, list: null, empty: null, hrow: null, rowsSig: '',
   vx: -1, vy: -1, vw: -1, vh: -1, clsAcc: 1, userCam: false, fitN: -1, fitVer: -2,
+  world: 0, userWorld: false, worldInit: false, wbtn: null, hdt: null,   // 表示中の世界 0=MR部屋 1=VR自然 / 手動で切り替えたか (切り替えるまでは多数派の世界へ自動)
 };
 const SPEC_STATUS = { idle: '', loading: '通信ライブラリを読み込み中…', joining: 'ルームに接続中…', ready: '接続済み', reconnecting: 'サーバー再接続中（観戦は継続）', failed: '接続できません' };
 
 function startSpectator(roomName) {
+  spec.world = 0; spec.userWorld = false; spec.worldInit = false;
   spec.on = true; spec.follow = -1; spec.top = false; spec.fitted = false; spec.userCam = false; spec.fitN = -1; spec.floorY = 0; spec.refSlot = -1; spec.refVer = -1;
   startEl.classList.add('hidden');
   renderer.domElement.style.display = 'block';
@@ -2618,12 +3522,15 @@ function specBuildDom() {
   el.textContent = ''; el.hidden = false;
   const mk = (cls, parent) => { const d = document.createElement('div'); d.className = cls; parent.appendChild(d); return d; };
   spec.el = el; spec.hd = mk('hd', el); spec.st = mk('st', el);
+  spec.hdt = document.createElement('span'); spec.hd.appendChild(spec.hdt);
+  const wb = document.createElement('button'); wb.type = 'button'; wb.className = 'wbtn'; wb.textContent = 'MR表示中 ▸ VRへ';   // ワールド切替 (キー N と同じ)
+  wb.addEventListener('click', () => { specToggleWorld(); }); spec.hd.appendChild(wb); spec.wbtn = wb;
   spec.hrow = mk('hrow', el);
   for (const t of ['', '番', '状態', '高度', '速度', '位置合せ']) { const sp = document.createElement('span'); sp.textContent = t; spec.hrow.appendChild(sp); }
   for (let i = 3; i < 6; i++) spec.hrow.children[i].style.textAlign = 'right';
   spec.list = mk('list', el); spec.empty = mk('empty', el);
   spec.empty.textContent = 'パイロットの参加を待っています…';
-  mk('keys', el).textContent = 'ドラッグ=回転 / ホイール=ズーム / 右ドラッグ・Shift+ドラッグ=移動 / F=全体表示 / T=真上 / 1〜9,0 または名簿の行をクリック=追尾 / Esc=追尾解除';
+  mk('keys', el).textContent = 'ドラッグ=回転 / ホイール=ズーム / 右ドラッグ・Shift+ドラッグ=移動 / F=全体表示 / T=真上 / N=MR部屋⇄VR自然の表示切替 / 1〜9,0 または名簿の行をクリック=追尾 / Esc=追尾解除';
   spec.rowsSig = '';
 }
 /** 3Dビューを名簿の外側 (広い画面=右側 / 狭い画面=下側) だけに描く。名簿が部屋やドローンを隠さない。 */
@@ -2643,10 +3550,24 @@ function specLayout() {
   camera.aspect = w / h; camera.updateProjectionMatrix();
 }
 
+/** 表示する世界の切替 (0=MR部屋 1=VR自然)。見た目 (VR世界・霧・照明・カメラ範囲) もここで切り替える。 */
+function specSetWorld(w) {
+  const first = !spec.worldInit;
+  if (!first && w === spec.world) return;
+  spec.worldInit = true;
+  if (w === 1) { try { vrSceneLook(true); } catch (e) { w = 0; spec.userWorld = true; try { vrSceneLook(false); } catch (e2) { /* ignore */ } } } else vrSceneLook(false);   // 世界を作れなければ MR 表示のまま (自動切替も止める)
+  spec.world = w;
+  if (spec.rm) spec.rm.group.visible = w === 0;
+  if (w === 1) Object.assign(orbit, { rMin: 3, rMax: 900, tx: 0, ty: 3, tz: -4, r: 40 }); else Object.assign(orbit, { rMin: 0.5, rMax: 80, tx: 0, ty: 0.8, tz: 0, r: 7 });
+  spec.fitN = -1; spec.fitVer = -2; spec.userCam = false; spec.follow = -1; spec.rowsSig = '';
+}
+function specToggleWorld() { spec.userWorld = true; specSetWorld(spec.world === 1 ? 0 : 1); }
+function specFollowDist() { if (spec.follow >= 0 && spec.world === 1 && orbit.r > 40) orbit.r = 18; }   // VRの広い世界では追尾の距離を現実的に
+
 function specClassify() {
   const keys = [], cnt = [], first = [];
   for (const ps of net.list) {
-    if (ps.role === 'spectator' || !ps.hasState || ps.kind === NET_KIND_NONE) continue;
+    if (ps.role === 'spectator' || !ps.hasState || ps.kind === NET_KIND_NONE || ps.world === 1) continue;   // VRのパイロットは位置合わせのグループに数えない
     const k = ps.kind === NET_KIND_MANUAL ? 'm' : 'a:' + ps.id;
     let i = keys.indexOf(k); if (i < 0) { i = keys.length; keys.push(k); cnt.push(0); first.push(ps.slot); }
     cnt[i]++;
@@ -2654,15 +3575,20 @@ function specClassify() {
   let bi = -1;
   for (let i = 0; i < keys.length; i++) if (bi < 0 || cnt[i] > cnt[bi] || (cnt[i] === cnt[bi] && first[i] < first[bi])) bi = i;
   spec.refKey = bi >= 0 ? keys[bi] : '';
-  for (const ps of net.list) ps.specAl = ps.kind !== NET_KIND_NONE && !!spec.refKey && (ps.kind === NET_KIND_MANUAL ? 'm' : 'a:' + ps.id) === spec.refKey;
+  for (const ps of net.list) ps.specAl = ps.world === 1 || (ps.kind !== NET_KIND_NONE && !!spec.refKey && (ps.kind === NET_KIND_MANUAL ? 'm' : 'a:' + ps.id) === spec.refKey);
 }
 
 const _pb = new THREE.Vector3();
 function specSceneUpdate(nowMs, dt) {
   spec.clsAcc += dt; if (spec.clsAcc >= 0.1) { spec.clsAcc = 0; specClassify(); }   // 10Hzで十分 (毎フレームの配列確保を避ける)
+  // --- 表示する世界: 手動で切り替えるまでは、パイロットの多い世界 (同数なら現状維持) ---
+  let nm = 0, nv = 0;
+  for (const ps of net.list) if (ps.role !== 'spectator' && ps.hasState) { if (ps.world === 1) nv++; else nm++; }
+  if (!spec.worldInit) specSetWorld(nv > nm ? 1 : 0);
+  else if (!spec.userWorld && nv !== nm) specSetWorld(nv > nm ? 1 : 0);
   // --- 部屋モデル: 基準グループの最小スロットで平面を送ってきたパイロット ---
   let ref = null;
-  for (const ps of net.list) if (ps.role !== 'spectator' && ps.specAl && ps.planes && ps.planes.length && (!ref || ps.slot < ref.slot)) ref = ps;
+  for (const ps of net.list) if (ps.role !== 'spectator' && ps.world === 0 && ps.specAl && ps.planes && ps.planes.length && (!ref || ps.slot < ref.slot)) ref = ps;
   if (ref && (ref.slot !== spec.refSlot || ref.planesVer !== spec.refVer)) {
     spec.refSlot = ref.slot; spec.refVer = ref.planesVer;
     let fy = 1e9, fl = 1e9;
@@ -2685,7 +3611,7 @@ function specSceneUpdate(nowMs, dt) {
     if (ps.sp.y - ps.h / 100 < gy) gy = ps.sp.y - ps.h / 100;
   }
   if (!spec.hasPlanes) spec.floorY = n && gy < 1e8 ? Math.min(gy, 0.5) : 0;
-  spec.grid.visible = !spec.hasPlanes;
+  spec.grid.visible = !spec.hasPlanes && spec.world === 0;
   if (n) {
     const size = clamp(Math.ceil(Math.max(x1 - x0, z1 - z0, 2) * 1.6 + 2), 4, 60);
     if (Math.abs(size - spec.gridSize) > 0.01) { spec.gridSize = size; spec.grid.scale.setScalar(size); }
@@ -2699,16 +3625,16 @@ function specFit() {
   let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9, z0 = 1e9, z1 = -1e9;
   const add = (x, y, z) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z; };
   for (const ps of net.list) {
-    if (ps.role === 'spectator' || !ps.hasState) continue;
-    add(ps.sp.x, ps.sp.y, ps.sp.z); add(ps.sh.x, ps.sh.y, ps.sh.z);
+    if (ps.role === 'spectator' || !ps.hasState || ps.world !== spec.world) continue;
+    add(ps.sp.x, ps.sp.y, ps.sp.z); if (spec.world === 0) add(ps.sh.x, ps.sh.y, ps.sh.z);
   }
-  if (spec.hasPlanes) {
+  if (spec.hasPlanes && spec.world === 0) {
     const ref = net.peers.get(spec.refSlot);
     if (ref && ref.planes) for (const pl of ref.planes) for (let k = 0; k < 4; k++) { _pb.set((k & 1) ? pl.maxX : pl.minX, 0, (k & 2) ? pl.maxZ : pl.minZ).applyMatrix4(pl.m); add(_pb.x, _pb.y, _pb.z); }
   }
   if (x0 > x1) { add(-2, 0, -2); add(2, 2, 2); }
   const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2;
-  const rad = Math.max(1.5, 0.5 * Math.hypot(x1 - x0, y1 - y0, z1 - z0));
+  const rad = Math.max(spec.world === 1 ? 12 : 1.5, 0.5 * Math.hypot(x1 - x0, y1 - y0, z1 - z0));
   const fv = camera.fov * Math.PI / 180, fe = Math.min(fv, 2 * Math.atan(Math.tan(fv / 2) * camera.aspect));
   orbit.tx = cx; orbit.ty = cy; orbit.tz = cz; orbit.r = clamp(rad * 1.02 / Math.sin(fe / 2), orbit.rMin, orbit.rMax);
 }
@@ -2720,9 +3646,10 @@ function specKey(e) {
     spec.top = !spec.top;
     if (spec.top) { spec.savedPh = orbit.ph; orbit.ph = orbit.phMax; } else orbit.ph = spec.savedPh;
   } else if (e.code === 'Escape') spec.follow = -1;
+  else if (e.code === 'KeyN') specToggleWorld();
   else if (/^(Digit|Numpad)\d$/.test(e.code)) {
     const d = +e.code.slice(-1), slot = d === 0 ? 9 : d - 1, ps = net.peers.get(slot);
-    if (ps && ps.hasState && ps.role !== 'spectator') { spec.follow = slot; spec.userCam = true; }
+    if (ps && ps.hasState && ps.role !== 'spectator') { spec.follow = slot; spec.userCam = true; specFollowDist(); }
   }
 }
 
@@ -2735,14 +3662,20 @@ function specCamera(dt) {
     } else if (!ps) spec.follow = -1;
   }
   updateOrbit();
+  if (spec.world === 1 && vrw.built) {                       // VRの観戦カメラは地面の下に潜らない。空は常にカメラに追従
+    const g = vrGround(camera.position.x, camera.position.z) + 1.5;
+    if (camera.position.y < g) { camera.position.y = g; camera.lookAt(orbit.tx, orbit.ty, orbit.tz); }
+    vrw.sky.position.copy(camera.position); vrw.clouds.rotation.y = performance.now() * 0.000004;
+  }
 }
 
 function specRosterUpdate() {
   const pilots = [];
   for (const ps of net.list) if (ps.role !== 'spectator' && ps.hasState) pilots.push(ps);
-  spec.hd.textContent = 'ルーム: ' + net.room;
+  spec.hdt.textContent = 'ルーム: ' + net.room;
+  spec.wbtn.textContent = spec.world === 1 ? 'VR表示中 ▸ MRへ' : 'MR表示中 ▸ VRへ';
   const stTxt = net.status === 'failed' ? (net.statusText || SPEC_STATUS.failed) : (SPEC_STATUS[net.status] || '');
-  spec.st.textContent = stTxt + (net.status === 'ready' ? ' ・ パイロット ' + pilots.length + '人' + (net.nSpec ? ' ・ 観戦 ' + (net.nSpec + 1) + '人' : '') : '');
+  spec.st.textContent = stTxt + (net.status === 'ready' ? ' ・ パイロット ' + pilots.length + '人' + (net.nSpec ? ' ・ 観戦 ' + (net.nSpec + 1) + '人' : '') + ' ・ 表示: ' + (spec.world === 1 ? 'VR自然' : 'MR部屋') : '');
   spec.empty.hidden = pilots.length > 0;
   const sig = pilots.map((p) => p.slot).join(',');
   const now = performance.now();
@@ -2753,15 +3686,15 @@ function specRosterUpdate() {
       r.children[0].style.background = hex6(PALETTE[ps.slot % PALETTE.length]);
       r.children[1].textContent = String(ps.slot + 1);
       const slot = ps.slot;
-      r.addEventListener('click', () => { spec.follow = spec.follow === slot ? -1 : slot; spec.userCam = true; });   // 行クリックで追尾 (10番以降は数字キーが無いので)
+      r.addEventListener('click', () => { spec.follow = spec.follow === slot ? -1 : slot; spec.userCam = true; specFollowDist(); });   // 行クリックで追尾 (10番以降は数字キーが無いので)
       ps.row = r; spec.rowsSig = '';
     }
     const live = now - ps.lastState < C.NET_LOST_MS;
-    const al = !ps.specAl ? '未調整' : ps.kind === NET_KIND_MANUAL ? '2点' : '共有';   // 位置合わせの方式 (操縦モードの「自動/手動」と紛れない語にする)
+    const al = ps.world === 1 ? 'VR' : !ps.specAl ? '未調整' : ps.kind === NET_KIND_MANUAL ? '2点' : '共有';   // 位置合わせの方式 (操縦モードの「自動/手動」と紛れない語にする) / VRのパイロットは 'VR'
     const cells = [live ? MODE_NAMES[ps.mode] + '・' + STATE_NAMES[ps.st] : '応答なし', (ps.h / 100).toFixed(2) + 'm', (ps.spd / 10).toFixed(1) + 'm/s', al];
     for (let i = 0; i < 4; i++) { const el = ps.row.children[2 + i]; if (el.textContent !== cells[i]) el.textContent = cells[i]; }
     ps.row.children[5].className = ps.specAl ? 'al' : 'al bad';
-    ps.row.className = 'row' + (ps.specAl ? '' : ' dim') + (spec.follow === ps.slot ? ' fol' : '');
+    ps.row.className = 'row' + (ps.specAl && ps.world === spec.world ? '' : ' dim') + (spec.follow === ps.slot ? ' fol' : '');   // 表示していない世界のパイロットは薄く
   }
   if (sig !== spec.rowsSig) { spec.rowsSig = sig; for (const ps of pilots) spec.list.appendChild(ps.row); }   // スロット順に並べ直す (appendChild は移動)
 }
@@ -2782,7 +3715,8 @@ if (DEBUG) {
   const dv = new THREE.Vector3(), dq = new THREE.Quaternion();
   const yawOf = (q) => { dv.set(0, 0, -1).applyQuaternion(q); return Math.atan2(-dv.x, -dv.z); };
   window.__drone = {
-    THREE, C, pos, vel, quat, sim, shadowBias, shadowMat, input, head, room, planes, auto, hud, hudMesh, audio, drone, mon, monMesh, monRT, monScene, fpvCam, roomModel, roomFill, roomLines, userMark, MON_LAYER, planeKind, shadow, camera, renderer, scene, orbit, tgt, vCmd, startCenter,
+    THREE, C, P, P_MR, P_VR, world, rig, vrw, fade, rigS, vrHold, eyeW, eyeQ, fadeQuad, vigQuad, vigMat, fadeMat, hemi, sun, depthHook, wind, mrSave, mrLight, mrCam, pos, vel, quat, sim, shadowBias, shadowMat, input, head, room, planes, auto, hud, hudMesh, audio, drone, mon, monMesh, monRT, monScene, fpvCam, roomModel, roomFill, roomLines, userMark, MON_LAYER, planeKind, shadow, camera, renderer, scene, orbit, tgt, vCmd, startCenter,
+    terrainHeight, terrainAt, vrGround, vrGroundMax, vrHomeFor, vrRawHeight, vrDepth, vrDepthRange, frameErr, vrFail, vrFadeStep, netInitShared, sharedDiag, drawHud, hudCv, applyWorld, vrRequestWorld, vrRequestCam, vrUpdateRig, vrTreeCollide, collideVR, vrSurfaceTop, vrBuildWorld, vrSceneLook, vrPickWaypoint, vrHoldUpdate, windStart, windStop, specSetWorld, specToggleWorld, vrFrame, applyDepthMeshMode, vrPlaceAtHome,
     stepSim, collide, updatePlanes, recomputeRoom, readXRInputs, placeHud, updateHeadXR, pickWaypoint, behindWall, surfaceHeightAt, surfaceClearance,
     toggleFlight, toggleMode, toggleHud, toggleMonitor, setMonitor, renderMonitor, updateFpvCamera, syncRoomModel, rebuildRoomModel, roomModelStale, resetWorld, placeDroneInitial, initAudio, stopAudio, frame,
     get yawCmd() { return yawCmd; }, get xrSession() { return xrSession; }, get placed() { return placed; },
@@ -2793,10 +3727,10 @@ if (DEBUG) {
     netStatus() {
       const now = performance.now();
       return {
-        on: net.on, role: net.role, room: net.room, hash: net.hash, slot: net.slot, status: net.status, ready: net.ready, notice: net.notice, nConn: net.nConn, nSpec: net.nSpec, unaligned: net.unaligned,
-        align: { kind: align.kind, id: align.id, forced: align.forced }, tx: net.txCount, rx: net.rxCount, rxBad: net.rxBad, perfMs: net.perfN ? net.perfMs / net.perfN : 0,
+        on: net.on, role: net.role, room: net.room, hash: net.hash, slot: net.slot, status: net.status, ready: net.ready, notice: net.notice, nConn: net.nConn, nSpec: net.nSpec, unaligned: net.unaligned, nWorld: net.nWorld, world: world.vr ? 1 : 0,
+        align: { kind: align.kind, id: align.id, forced: align.forced }, shared: { diag: sharedSp.diag, why: sharedSp.why, text: SHARED_DIAG_TXT[sharedSp.diag] || '', hasSpace: !!sharedSp.space, uuid: sharedSp.uuid, valid: sharedSp.valid, blocked: sharedBlocked }, tx: net.txCount, rx: net.rxCount, rxBad: net.rxBad, perfMs: net.perfN ? net.perfMs / net.perfN : 0,
         scripts: Array.from(document.scripts).map((e) => e.src).filter(Boolean),
-        peers: net.list.map((ps) => ({ slot: ps.slot, role: ps.role, open: !!(ps.conn && ps.conn.open), dir: ps.conn ? ps.conn._dir : '', seq: ps.seq, rtt: ps.rtt, hasState: ps.hasState, kind: ps.kind, id: ps.id, shown: ps.shown, fade: ps.fade, age: now - ps.lastState, silent: now - ps.lastMsg, st: ps.st, mode: ps.mode, n: ps.n })),
+        peers: net.list.map((ps) => ({ slot: ps.slot, role: ps.role, open: !!(ps.conn && ps.conn.open), dir: ps.conn ? ps.conn._dir : '', seq: ps.seq, rtt: ps.rtt, hasState: ps.hasState, kind: ps.kind, id: ps.id, shown: ps.shown, fade: ps.fade, age: now - ps.lastState, silent: now - ps.lastMsg, st: ps.st, mode: ps.mode, n: ps.n, world: ps.world })),
       };
     },
     /** 他機の表示位置 (自分のlocal座標 = シーン座標。観戦では共有座標) */
@@ -2853,7 +3787,7 @@ if (DEBUG) {
     go(true);
   } else {
     // デスクトッププレビュー (ルーム名があれば観戦モード)
-    const previewMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / V=ドローン視点 / ドラッグ=視点';
+    const previewMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / V=ドローン視点 / N=MR/VR / C=視点 / ドラッグ=視点';
     const specMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。ルーム名が入力されているので、PCから観戦できます（自機は飛ばしません）。';
     const refresh = () => { const r = currentRoom(); btn.textContent = r ? '観戦を開始' : 'PCプレビューを開始'; msgEl.textContent = r ? specMsg : previewMsg; };
     roomEl.addEventListener('input', refresh); refresh();
