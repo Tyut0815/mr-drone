@@ -83,7 +83,7 @@
 <script type="module">
 import * as THREE from 'three';
 
-const APP_VERSION = 'v0.4';                                    // 開始画面に表示するビルド識別子
+const APP_VERSION = 'v0.5';                                    // 開始画面に表示するビルド識別子
 const DEBUG = new URLSearchParams(location.search).has('debug');
 
 /* =====================================================================
@@ -104,7 +104,8 @@ const C = Object.freeze({
   MAN_V: 1.6, MAN_VY: 1.0, MAN_YAW: 1.8, DEADZONE: 0.12, EXPO: 0.6,
   RPM_HOVER: 9000, RPM_VISUAL_MAX: 700,
   RECALL_DIST: 1.0, RECALL_VMAX: 1.6,
-  BOX_X: 3, BOX_Y: 2, BOX_Z: 3,            // 平面が無い場合の部屋
+  BOX_X: 3, BOX_Y: 2, BOX_Z: 3,            // 平面が無い場合の部屋 (自動飛行の範囲)
+  FREE_RANGE: 8,                           // 部屋の箱の外側へ、手動でここまでは出られる [m]。箱は実在の壁ではないため、見えない壁にしない
   HUD_HZ: 5, AUTO_TAKEOFF_DELAY: 4,
   ROOM_REFRESH: 1.0,
   FPV_HZ: 30,                              // ドローン視点モニターの更新頻度 [Hz]
@@ -407,7 +408,7 @@ const pidVx = new PID(3.5, 1.2, 0, 1.5), pidVz = new PID(3.5, 1.2, 0, 1.5), pidV
 
 // 入力 (スティックは整形済み)
 const input = { lx: 0, ly: 0, rx: 0, ry: 0, recall: false, hasController: false };
-const prevBtn = { A: false, B: false, X: false, L: false, Y: false, RT: false };   // Y/RT: ルーム参加時の位置合わせ用
+const prevBtn = { A: false, B: false, X: false, L: false, Y: false, RT: false, LS: false };   // Y/RT: ルーム参加時の位置合わせ用
 
 // ユーザーの頭
 const head = { pos: new THREE.Vector3(0, 1.6, 0), fwd: new THREE.Vector3(0, 0, -1), fwdH: new THREE.Vector3(0, 0, -1), quat: new THREE.Quaternion(), valid: false };
@@ -725,7 +726,9 @@ function collide() {
     }
   }
   // 部屋の箱
-  const lx = room.min.x + R, hx = room.max.x - R, lz = room.min.z + R, hz = room.max.z - R;
+  // 箱は「検出した平面の外接範囲」または仮の3m箱で、実在の壁とは限らない。実在の壁は上の平面判定が受け持つので、
+  // ここでは FREE_RANGE だけ外側に広げた範囲を、遠くへ飛び去らないための安全枠としてのみ使う。
+  const M = C.FREE_RANGE, lx = room.min.x + R - M, hx = room.max.x - R + M, lz = room.min.z + R - M, hz = room.max.z - R + M;
   if (pos.x < lx) { pos.x = lx; if (vel.x < 0) vel.x *= -e; } else if (pos.x > hx) { pos.x = hx; if (vel.x > 0) vel.x *= -e; }
   if (pos.z < lz) { pos.z = lz; if (vel.z < 0) vel.z *= -e; } else if (pos.z > hz) { pos.z = hz; if (vel.z > 0) vel.z *= -e; }
   const top = room.max.y - C.CEIL_CLEAR;
@@ -915,7 +918,7 @@ function drawHudNet(x, ctrl, noPlane) {
     }
     if (warn) { x.fillStyle = '#ffd479'; fitText(x, warn, 18, 202, W, 18, 12, true); }
     if (cal.msg && now < cal.msgUntil) { x.fillStyle = '#ff9a7a'; fitText(x, cal.msg, 18, 226, W, 18, 12, true); }
-    else if (noPlane) { x.fillStyle = '#ffd479'; fitText(x, '平面なし: スペース設定で精度向上', 18, 226, W, 17, 12, false); }
+    else if (noPlane) { x.fillStyle = '#ffd479'; fitText(x, '壁未認識: 左スティック押込みで設定', 18, 226, W, 17, 12, false); }
   }
 }
 
@@ -944,7 +947,7 @@ function drawHud(alt, spd, noPlane, ctrl) {
   }
   const ntc = net.notice && performance.now() < net.noticeUntil ? net.notice : '';    // ネットワーク機能が使えなかった時の短い通知 (ソロで飛行は継続)
   if (ntc) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText(ntc, 18, 226); }
-  else if (noPlane) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText('平面なし: スペース設定で精度向上', 18, 226); }
+  else if (noPlane) { x.fillStyle = '#ffd479'; fitText(x, '壁未認識: 左スティック押込みで設定', 18, 226, 476, 19, 12, false); }
   hudTex.needsUpdate = true;
 }
 
@@ -1350,6 +1353,14 @@ function shape(v) {
   const s = (a - C.DEADZONE) / (1 - C.DEADZONE), o = (1 - C.EXPO) * s + C.EXPO * s * s * s;
   return v < 0 ? -o : o;
 }
+/** Questのスペース設定を起動 (1セッションに1回まで)。未対応・拒否は無視 */
+let roomCaptureAsked = false;
+function startRoomCapture(session) {
+  if (roomCaptureAsked || !session || typeof session.initiateRoomCapture !== 'function') return;
+  roomCaptureAsked = true;
+  try { const p = session.initiateRoomCapture(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* 無視 */ }
+}
+
 function edge(name, pressed) { const was = prevBtn[name]; prevBtn[name] = pressed; return pressed && !was; }
 
 /** xr-standard: axes[2],[3]=サムスティック、buttons[0]=トリガー、[4]=A/X、[5]=B/Y。前倒し=axes[3]が負 */
@@ -1366,6 +1377,7 @@ function readXRInputs(session, xrFrame, ref) {
       gotL = true; input.lx = shape(sx); input.ly = shape(-sy);   // 上=上昇, 右=右旋回
       if (edge('X', !!(b[4] && b[4].pressed))) toggleHud();
       if (edge('L', !!(b[0] && b[0].pressed))) toggleMonitor();   // 左トリガー = ドローン視点モニター
+      if (edge('LS', !!(b[3] && b[3].pressed)) && planes.length === 0) startRoomCapture(session);   // 左スティック押込み = スペース設定 (平面が無い時のみ)
       if (net.on && net.role === 'pilot') netLeftY(!!(b[5] && b[5].pressed));   // 左Y = 位置合わせの開始/中止・長押しで手動解除 (ルーム参加時のみ)
     } else if (s.handedness === 'right') {
       gotR = true; input.rx = shape(sx); input.ry = shape(-sy);   // 前=前進, 右=右移動
@@ -1375,7 +1387,7 @@ function readXRInputs(session, xrFrame, ref) {
       if (net.on && net.role === 'pilot') netRightController(s, b, xrFrame, ref);   // 位置合わせ中は呼び戻しを抑止し、トリガーで点を記録
     }
   }
-  if (!gotL) { prevBtn.X = false; prevBtn.L = false; prevBtn.Y = false; }
+  if (!gotL) { prevBtn.X = false; prevBtn.L = false; prevBtn.Y = false; prevBtn.LS = false; }
   if (!gotR) { prevBtn.A = false; prevBtn.B = false; prevBtn.RT = false; }
   input.hasController = gotL || gotR;
 }
@@ -1536,7 +1548,7 @@ function resetWorld() {
   sim.pitch = sim.roll = sim.yawRate = 0; sim.holdXZ = sim.holdY = false;
   planes.length = 0; planeMap.clear(); planeFeature = false; roomTimer = 0; head.valid = false; hud.hudInit = false;
   auto.phase = 1; auto.until = 0; auto.speed = 0;
-  prevBtn.A = prevBtn.B = prevBtn.X = prevBtn.L = false;
+  prevBtn.A = prevBtn.B = prevBtn.X = prevBtn.L = prevBtn.LS = false; roomCaptureAsked = false;
   planesRev++;
   resetMonitor();
   autoTakeoffDone = false; noCtrlT = 0;
