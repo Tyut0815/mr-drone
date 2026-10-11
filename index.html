@@ -81,13 +81,14 @@
       <li><b>A</b>＝自動/手動切替　<b>B</b>＝離陸/着陸　<b>右トリガー長押し</b>＝手元へ呼び戻し　<b>X</b>＝HUD表示切替　<b>左トリガー</b>＝ドローン視点　<b>Y</b>＝位置合わせ（ルーム参加時）</li>
       <li><b>右スティック長押し（0.5秒）</b>＝ワールド切替（MR → 自然 → 試験場 → MR）　<b>左スティック押込み</b>＝視点切替（VR：操縦者目線 ⇄ 一人称）</li>
       <li><b>試験場</b>（無人航空機操縦士 一等・二等 実地試験の練習場）：地面に立ち、試験員の指示（音声と字幕）に従って飛ばします。<b>B</b>＝モーター始動/停止、スロットルで離陸・降下して接地すれば着陸　<b>左Y</b>＝科目　<b>A</b>＝お手本　<b>左トリガー</b>＝本番/補助表示（長押しでやり直し）。フリー練習では <b>左Y長押し</b>＝位置安定 ON/OFF、<b>A</b>＝風の強さ</li>
+      <li><b>自然</b>（ワールド切替で入る景色）：<b>左トリガー</b>＝位置安定 ON/OFF（既定ON。OFFだと止まらず風に流され、自動飛行・帰還は使えません）　<b>左Y</b>＝風の強さ（無風→弱→中。下の「風（VR）」と同じ）</li>
       <li class="warn">VRでは周囲が見えません。その場から動かずに操作してください</li>
       <li>コントローラーなし（ハンドトラッキング）の場合は自動モードで飛行します。ピンチで離着陸。</li>
     </ul>
     <div id="roomWrap"><label for="room">ルーム名（空欄なら1人で飛行）</label><input id="room" type="text" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ルーム名（空欄なら1人で飛行）">
       <p id="roomHint">同じルーム名の人と一緒に飛ばせます（PCは観戦）。位置合わせは Y ボタン（全員が同じ2点を同じ順に）。chrome://flags の「WebXR experiments」が有効なら自動。</p></div>
     <div id="stickWrap"><label for="stickmode">スティックの割り当て（全ワールド共通）</label><select id="stickmode"><option value="2">モード2：左＝上昇下降・旋回 / 右＝前後・左右</option><option value="1">モード1：左＝前後・旋回 / 右＝上昇下降・左右</option></select>
-      <label for="windsel" style="margin-top:10px">試験場の風（位置安定OFFの科目で流されます）</label><select id="windsel"><option value="0">無風</option><option value="1">弱（平均 0.3 m/s・既定）</option><option value="2">中（平均 0.8 m/s）</option></select></div>
+      <label for="windsel" style="margin-top:10px">風（VR）</label><select id="windsel"><option value="0">無風</option><option value="1">弱（自然 平均 1.0 m/s・試験場 0.3 m/s・既定）</option><option value="2">中（自然 平均 2.5 m/s・試験場 0.8 m/s）</option></select></div>
     <button id="btn" type="button">MRを開始</button>
     <p id="msg"></p>
     <p id="ver"></p>
@@ -97,8 +98,9 @@
 <script type="module">
 import * as THREE from 'three';
 
-const APP_VERSION = 'v0.7';                                    // 開始画面に表示するビルド識別子
+const APP_VERSION = 'v0.8';                                    // 開始画面に表示するビルド識別子
 const DEBUG = new URLSearchParams(location.search).has('debug');
+const NAT_SWAY_Q = new URLSearchParams(location.search).get('sway') === '1';   // ?sway=1: 自然の樹木の揺れ (頂点シェーダーの差し替え) を有効にする。既定は無効 (C.NAT_TREE_SWAY)
 const START_WORLD = (() => { const w = new URLSearchParams(location.search).get('world'); return w === 'exam' ? 2 : w === 'vr' ? 1 : 0; })();   // ?world=vr: 自然ワールドで開始 / ?world=exam: 試験場で開始 (既定はMR)
 
 /* =====================================================================
@@ -158,6 +160,12 @@ const C = Object.freeze({
   VR_FADE_S: 0.25, VR_HOLD_S: 0.5,         // 切替時の暗転(出/入それぞれ) [s] / 右スティック長押しの時間 [s]
   VR_NEAR: 0.05, VR_FAR: 2500,             // VR中のカメラ範囲 [m] (霧で見えなくなる距離より十分遠く / HUD・暗幕より手前)
   NET_MAX_POS_VR: 400,                     // VRワールドで受信する座標の上限 [m]
+  // --- VR自然: 位置安定 (ATTI) と風 (「14b. 自然の位置安定と風」)。風の強さは試験場と同じ3段階 (EX_WIND_DEFAULT・開始画面・?wind=) だが、値は自然用 ---
+  NAT_ATTI_TILT: 25 * Math.PI / 180, NAT_ATTI_DRAG: 0.5,   // 位置安定OFF (ATTI) でスティック全開の傾き (最大 25°。惰性込みの巡航は約 12 m/s) / 空気抵抗の係数 (1=位置安定ONと同じ。実機は慣性で流れる。5 m/s から 2 秒後 3.3 m/s)
+  NAT_WIND_MEAN: Object.freeze([0, 1.0, 2.5]), NAT_WIND_GUST: 0.4, NAT_WIND_DIR: 30 * Math.PI / 180, NAT_WIND_TURB: 0.08,   // 風の平均 [m/s] (地上付近。0=無風 / 1=弱 / 2=中) / 突風 ±(平均の 40%) / 向きの振れ (常風向から ±30°) / 乱れ (高周波。風速の ±8%)
+  NAT_BRAKE_KP: 3.5, NAT_BRAKE_V: 0.5, NAT_LAND_FF: 4.0,   // 位置安定 OFF→ON の制動: 速度に比例して減速 (傾き上限まで) → この速さ [m/s] を下回ったらその場の位置ホールドへ / OFFの自動着陸: 流されている先の地面が下がる速さを降下に足す上限 [m/s]
+  NAT_WIND_H0: 2, NAT_WIND_H1: 60, NAT_WIND_GRAD: 2.0,   // 高度による増し: 地上 H0 m で ×1.0 → H1 m 以上で ×NAT_WIND_GRAD (なめらか)
+  NAT_TREE_SWAY: false, NAT_SOCK_N: 4, NAT_SOCK_H: 6.0, NAT_SOCK_LEN: 2.4, NAT_SOCK_R: 16.5, NAT_CLOUD_V: Object.freeze([0.25, 1.2, 3.0]), NAT_CLOUD_R: 520, NAT_FOG_HAZE: Object.freeze([0, 0, 0.08]),   // 樹木の揺れ (頂点シェーダーの差し替え。実機 (Quest/Adreno) で未検証の見た目だけの効果なので既定は無効。?sway=1 で有効 = 下の NAT_SWAY) / 吹き流しの本数 (離着陸場の外周。パッド・操縦位置・離陸の柱から離す) / ポールの高さ / 長さ / 世界の中心からの距離 [m] / 雲の流れる速さ [m/s] (風の強さごと) / 雲が回り込む範囲 (±m) / 霧の濃さの増分 (中だけ +8%)
   // --- 無人航空機操縦士 実地試験 練習場 (VR第3のワールド)。コースの寸法は EX_COURSES (下の「15. 試験場」) が唯一の出典 ---
   EX_CELL_X: 30, EX_CELL_Z: 25, EX_COLS: 5,   // 1スロット分のセル [m] (X 30 / Z 25。21m×13mの不合格区画の図 + 受験者の立ち位置 + 掲示板が重ならない大きさ) / 1行のセル数
   EX_MARGIN_X: 27, EX_MARGIN_Z: 18, EX_CEIL: 40, EX_EDGE_SOFT: 6, EX_FOG: 0.0016,   // 使用セルの外側の余白 [m] / 高度上限 [m] / 縁の柔らかい壁の幅 [m] / 霧
@@ -457,12 +465,12 @@ let pitchCmd = 0, rollCmd = 0;       // 姿勢指令
 
 // 飛行パラメータ。MR の値は C のまま (従来と同一のビット列)。VR 中は P_VR へ切り替える (C は凍結のまま、間接参照で切替)。
 const P_MR = Object.freeze({ MAN_V: C.MAN_V, MAN_VY: C.MAN_VY, MAN_YAW: C.MAN_YAW, MAX_TILT: C.MAX_TILT, TAKEOFF_ALT: C.TAKEOFF_ALT, DRAG_QUAD: C.DRAG_QUAD,
-  AUTO_VMAX: C.AUTO_VMAX, AUTO_VY_MAX: C.AUTO_VY_MAX, RECALL_VMAX: C.RECALL_VMAX, TAKEOFF_VY: 0.8, LAND_VY: 0.45, DRAG_FF: 0, EX: 0 });
+  AUTO_VMAX: C.AUTO_VMAX, AUTO_VY_MAX: C.AUTO_VY_MAX, RECALL_VMAX: C.RECALL_VMAX, TAKEOFF_VY: 0.8, LAND_VY: 0.45, DRAG_FF: 0, EX: 0, ATTI_TILT: 0, ATTI_DRAG: 1 });   // ATTI_*: 位置安定OFFの最大傾き / 抵抗係数 (MRには位置安定OFFが無いので使わない)
 const P_VR = Object.freeze({ MAN_V: C.VR_MAN_V, MAN_VY: C.VR_MAN_VY, MAN_YAW: C.VR_MAN_YAW, MAX_TILT: C.VR_MAX_TILT, TAKEOFF_ALT: C.VR_TAKEOFF_ALT, DRAG_QUAD: C.VR_DRAG_QUAD,
-  AUTO_VMAX: C.VR_AUTO_V, AUTO_VY_MAX: C.VR_AUTO_VY, RECALL_VMAX: C.VR_RECALL_V, TAKEOFF_VY: C.VR_TAKEOFF_VY, LAND_VY: C.VR_LAND_VY, DRAG_FF: 1, EX: 0 });
+  AUTO_VMAX: C.VR_AUTO_V, AUTO_VY_MAX: C.VR_AUTO_VY, RECALL_VMAX: C.VR_RECALL_V, TAKEOFF_VY: C.VR_TAKEOFF_VY, LAND_VY: C.VR_LAND_VY, DRAG_FF: 1, EX: 0, ATTI_TILT: C.NAT_ATTI_TILT, ATTI_DRAG: C.NAT_ATTI_DRAG });
 // 試験場: 最大速度 4 m/s・上昇 2 m/s・傾き 25°。離陸は自動ではなく、B で始動してスロットルで浮上する (EX=1)。AUTO系の値は使わない (お手本飛行は試験場の専用コマンド)。
 const P_EX = Object.freeze({ MAN_V: C.EX_MAN_V, MAN_VY: C.EX_MAN_VY, MAN_YAW: C.EX_MAN_YAW, MAX_TILT: C.EX_MAX_TILT, TAKEOFF_ALT: 0.5, DRAG_QUAD: C.VR_DRAG_QUAD,
-  AUTO_VMAX: C.EX_DEMO_V, AUTO_VY_MAX: 1.0, RECALL_VMAX: C.EX_DEMO_V, TAKEOFF_VY: C.EX_MAN_VY, LAND_VY: 0.5, DRAG_FF: 1, EX: 1 });
+  AUTO_VMAX: C.EX_DEMO_V, AUTO_VY_MAX: 1.0, RECALL_VMAX: C.EX_DEMO_V, TAKEOFF_VY: C.EX_MAN_VY, LAND_VY: 0.5, DRAG_FF: 1, EX: 1, ATTI_TILT: C.EX_ATTI_TILT, ATTI_DRAG: C.EX_ATTI_DRAG });
 const P = Object.assign({}, P_MR);   // 今使っているパラメータ (ワールド切替で書き換える)
 const world = { id: 0, vr: false, ex: false, cam: 1, home: new THREE.Vector3() };   // id: 0=MR 1=自然 2=試験場 / vr: VRワールド中 (id>0) / ex: 試験場中 / cam: 0=FPV(機体目線) 1=操縦者目線 / home: VRの離着陸点 (自然=パッドの中心 / 試験場=Hの円の中心)
 
@@ -684,8 +692,12 @@ function manualCommands() {
 function computeCommands(dt) {
   vCmd.set(0, 0, 0); yawCmd = 0;
   if (sim.state === ST_TAKEOFF) { vCmd.y = clamp((sim.takeY - pos.y) * 1.6, 0.2, P.TAKEOFF_VY); return; }
-  if (sim.state === ST_LANDING) { vCmd.y = -clamp(0.12 + (pos.y - sim.groundY) * 0.8, 0.12, P.LAND_VY); return; }
-  if (input.recall && !world.ex) {                          // 試験場には呼び戻しがない (右トリガーは何もしない)
+  if (sim.state === ST_LANDING) {
+    vCmd.y = -clamp(0.12 + (pos.y - sim.groundY) * 0.8, 0.12, P.LAND_VY);
+    if (nat.landFf > 0 && world.id === 1 && !nat.hold) vCmd.y -= nat.landFf;   // 自然・位置安定OFFの着陸: 風で流されて下り斜面の上を滑っていく時、地面が下がる分だけ余計に降りる (地面すれすれを延々と追いかけない)。それ以外は 0 のまま = 従来どおり
+    return;
+  }
+  if (input.recall && !world.ex && recallOk()) {             // 試験場には呼び戻しがない (右トリガーは何もしない) / 自然で位置安定OFFの間は帰還もできない (位置が分からない。HUDに注記)
     if (world.vr) { vrRecallCommands(); return; }           // VR: 自分の離着陸パッドの真上3mへ
     // 頭の正面1mへ戻る
     tmpV.copy(head.pos).addScaledVector(head.fwdH, C.RECALL_DIST);
@@ -705,19 +717,23 @@ function computeCommands(dt) {
  * ===================================================================== */
 const aDes = new THREE.Vector3();
 function control(dt) {
-  if (world.ex && exAtti()) { exControlAtti(dt); return; }   // 試験場で位置安定OFF (ATTI相当): スティック=傾き。下の速度/位置ホールドは使わない
+  if (attiNow()) { attiControl(dt); return; }                // 試験場・自然で位置安定OFF (ATTI相当): スティック=傾き。下の速度/位置ホールドは使わない
   // 水平
   if (vCmd.x * vCmd.x + vCmd.z * vCmd.z > 0.0004) {
-    sim.holdXZ = false;
+    sim.holdXZ = false; nat.brake = false;
     aDes.x = pidVx.step(vCmd.x - vel.x, 0, dt); aDes.z = pidVz.step(vCmd.z - vel.z, 0, dt);
-    if (P.DRAG_FF) {                                          // VR: 空気抵抗の先回り補償 (定常で目標速度に届く。MRは0で従来どおり)。試験場は風を引いた対気速度で補償 (風の推定値 wFf。他のワールドは 0 なのでビット一致)
-      const wx = world.ex ? ex.wFf.x : 0, wz = world.ex ? ex.wFf.z : 0, rx = vCmd.x - wx, rz = vCmd.z - wz;
+    if (P.DRAG_FF) {                                          // VR: 空気抵抗の先回り補償 (定常で目標速度に届く。MRは0で従来どおり)。試験場・自然は風を引いた対気速度で補償 (風の推定値 wFf。MRは 0 なのでビット一致。自然の無風も wFf=0 なので v0.7 とビット一致)
+      const wd = world.ex ? ex : nat, wx = world.vr ? wd.wFf.x : 0, wz = world.vr ? wd.wFf.z : 0, rx = vCmd.x - wx, rz = vCmd.z - wz;
       const dr = C.DRAG_LIN + P.DRAG_QUAD * Math.hypot(rx, rz); aDes.x += dr * rx; aDes.z += dr * rz;
     }
+  } else if (nat.brake && natBraking()) {                    // 自然: 位置安定 OFF→ON 直後の制動。惰性の速度を 0 へ (傾き上限まで) 落としてから、止まった所で下の位置ホールドへ入る (速いまま位置ホールドに入ると行き過ぎて戻る)
+    sim.holdXZ = false;
+    const wx = nat.wFf.x, wz = nat.wFf.z, dr = C.DRAG_LIN + P.DRAG_QUAD * Math.hypot(wx, wz);
+    aDes.x = -C.NAT_BRAKE_KP * vel.x - dr * wx; aDes.z = -C.NAT_BRAKE_KP * vel.z - dr * wz;
   } else {
     if (!sim.holdXZ) { sim.holdXZ = true; tgt.x = pos.x + vel.x * 0.35; tgt.z = pos.z + vel.z * 0.35; pidPx.reset(); pidPz.reset(); }
     aDes.x = pidPx.step(tgt.x - pos.x, -vel.x, dt); aDes.z = pidPz.step(tgt.z - pos.z, -vel.z, dt);
-    if (world.ex) { const wx = ex.wFf.x, wz = ex.wFf.z, dr = C.DRAG_LIN + P.DRAG_QUAD * Math.hypot(wx, wz); aDes.x -= dr * wx; aDes.z -= dr * wz; }   // 位置安定ON: 風で押される分を先回りで打ち消す (GNSS/ビジョンの風推定に相当)
+    if (world.vr) { const wd = world.ex ? ex : nat, wx = wd.wFf.x, wz = wd.wFf.z, dr = C.DRAG_LIN + P.DRAG_QUAD * Math.hypot(wx, wz); aDes.x -= dr * wx; aDes.z -= dr * wz; }   // 位置安定ON: 風で押される分を先回りで打ち消す (GNSS/ビジョンの風推定に相当)
   }
   // 鉛直
   if (Math.abs(vCmd.y) > 0.02) {
@@ -764,7 +780,7 @@ function integrate(dt) {
   const wa = 0.012;
   buildQuat(quat, sim.yaw, sim.pitch + wa * wob(sim.t, 0.3), sim.roll + wa * wob(sim.t, 2.0));
   tmpV.set(0, 1, 0).applyQuaternion(quat);                 // 機体の上方向
-  if (world.ex) exVelStep(dt, tmpV.x, tmpV.y, tmpV.z);       // 試験場: 風を含む空気抵抗
+  if (world.vr) { const atti = attiNow(); windVelStep(world.ex ? ex : nat, dt, tmpV.x, tmpV.y, tmpV.z, atti ? P.ATTI_DRAG : 1, world.ex || !atti ? 1 : P.ATTI_DRAG); }   // 試験場・自然: 風を含む空気抵抗 (風が0なら下の式と同じ演算)
   else {
     const sp = vel.length(), drag = C.DRAG_LIN + P.DRAG_QUAD * sp;
     vel.x += (tmpV.x * sim.thrust - drag * vel.x) * dt;
@@ -836,9 +852,9 @@ function updateMotors(dt, thrustLike, pErr, rErr, yErr) {
   }
 }
 
-/** 1ステップ。試験場だけ 前処理 (風・判定の時計) と後処理 (接地・判定) を挟む。MR/自然は stepSimBody そのもの。 */
+/** 1ステップ。試験場だけ 前処理 (風・判定の時計) と後処理 (接地・判定) を挟む。自然は前処理 (風・位置安定の整合) だけ。MR は stepSimBody そのもの。 */
 function stepSim(dt) {
-  if (world.ex) { exPre(dt); stepSimBody(dt); exPost(dt); } else stepSimBody(dt);
+  if (world.ex) { exPre(dt); stepSimBody(dt); exPost(dt); } else if (world.vr) { natPre(dt); stepSimBody(dt); } else stepSimBody(dt);
 }
 function stepSimBody(dt) {
   sim.t += dt;
@@ -885,7 +901,7 @@ function toggleFlight() {
   } else if (sim.state === ST_LANDING) sim.state = ST_FLYING;
   else sim.state = ST_LANDING;
 }
-function toggleMode() { if (world.ex) { exDemoToggle(); return; } sim.mode = sim.mode === MODE_AUTO ? MODE_MANUAL : MODE_AUTO; if (sim.mode === MODE_AUTO) { auto.phase = 1; auto.until = sim.t + 0.3; } }
+function toggleMode() { if (world.ex) { exDemoToggle(); return; } if (world.vr && !nat.hold && sim.mode === MODE_MANUAL) { natNote('位置安定OFF中は自動飛行不可'); return; } sim.mode = sim.mode === MODE_AUTO ? MODE_MANUAL : MODE_AUTO; if (sim.mode === MODE_AUTO) { auto.phase = 1; auto.until = sim.t + 0.3; } }
 function toggleHud() { sim.hudOn = !sim.hudOn; }
 
 /* =====================================================================
@@ -940,7 +956,7 @@ const hudTex = new THREE.CanvasTexture(hudCv); hudTex.colorSpace = THREE.SRGBCol
 const hudMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.12), new THREE.MeshBasicMaterial({ map: hudTex, transparent: true, depthTest: false }));
 hudMesh.renderOrder = 999;
 const HUD_GRIP_Y = 0.07, HUD_GRIP_RX = -Math.PI / 2 + 0.5;   // 左グリップ上のHUD位置/傾き (モニターも同じ平面を使う)
-const hud = { acc: 0, alt: -1, spd: -1, mode: -1, state: -1, noPlane: null, ctrl: null, on: null, leftGrip: null, hudInit: false, nsig: '', wl: '', hold: 0, dist: 0, exSig: '' };
+const hud = { acc: 0, alt: -1, spd: -1, mode: -1, state: -1, noPlane: null, ctrl: null, on: null, leftGrip: null, hudInit: false, nsig: '', wl: '', hold: 0, dist: 0, exSig: '', natSig: 0 };
 
 /** 幅に収まるまでフォントを縮めて描く */
 function fitText(x, text, px, py, maxW, size, minSize, bold) {
@@ -969,6 +985,31 @@ function drawHoldBar(x, y, W) {
   x.fillStyle = '#ffee66'; fitText(x, ['自然の世界へ移動します　', '試験場へ移動します　', 'MRへ戻ります　'][world.id] + '■'.repeat(s) + '□'.repeat(5 - s), 18, y, W, 19, 12, true);
 }
 
+/** 自然のHUD: 位置安定 ON/OFF (OFF は警告色) と 風の強さ・機体の高さでの風速・機首に対する風向きの矢印 (上 = 機首。矢印の向き = 機体が押される向き) を1行で描く。h = 32。 */
+function drawHudNatStrip(x, y) {
+  const on = nat.hold, label = on ? '位置安定 ON' : '位置安定 OFF', lv = ex.wind;
+  x.font = 'bold 22px sans-serif';
+  const cw = Math.ceil(x.measureText(label).width) + 24;
+  x.fillStyle = on ? 'rgba(56,211,159,0.28)' : 'rgba(255,86,60,0.96)';
+  x.beginPath(); if (x.roundRect) x.roundRect(18, y, cw, 32, 9); else x.rect(18, y, cw, 32); x.fill();
+  if (on) { x.strokeStyle = 'rgba(56,211,159,0.9)'; x.lineWidth = 2; x.stroke(); }
+  x.fillStyle = on ? '#8dffd8' : '#ffffff'; x.textBaseline = 'middle'; x.fillText(label, 30, y + 17);
+  // 風: 矢印 (円の上 = 機首) + 「風 弱 1.2 m/s」
+  const cx = 18 + cw + 30, cy = y + 16;
+  x.strokeStyle = 'rgba(184,198,214,0.8)'; x.lineWidth = 2; x.beginPath(); x.arc(cx, cy, 15, 0, Math.PI * 2); x.stroke();
+  x.fillStyle = '#b8c6d6'; x.beginPath(); x.moveTo(cx, cy - 20); x.lineTo(cx - 4, cy - 14); x.lineTo(cx + 4, cy - 14); x.closePath(); x.fill();   // 機首の印
+  if (lv > 0 && nat.wspd > 0.05) {
+    const a = natWindRel(), sa = Math.sin(a), ca = Math.cos(a), hx = cx + sa * 12, hy = cy - ca * 12, tx = cx - sa * 9, ty = cy + ca * 9;
+    x.strokeStyle = '#ffd479'; x.fillStyle = '#ffd479'; x.lineWidth = 3.5; x.beginPath(); x.moveTo(tx, ty); x.lineTo(cx + sa * 4, cy - ca * 4); x.stroke();
+    x.beginPath(); x.moveTo(hx, hy); x.lineTo(cx + sa * 3 + ca * 6.5, cy - ca * 3 + sa * 6.5); x.lineTo(cx + sa * 3 - ca * 6.5, cy - ca * 3 - sa * 6.5); x.closePath(); x.fill();
+  }
+  x.fillStyle = lv > 0 ? '#ffffff' : '#b8c6d6'; x.font = 'bold 20px sans-serif'; x.textBaseline = 'middle';
+  const wt = '風 ' + EX_WIND_NAME[lv] + (lv > 0 ? '  ' + nat.wspd.toFixed(1) + ' m/s' : ''), wx = cx + 24;
+  fitText(x, wt, wx, y + (lv > 0 ? 9 : 17), 494 - wx, lv > 0 ? 17 : 20, 12, true);
+  if (lv > 0) { x.fillStyle = '#d5deea'; fitText(x, '矢印＝流される向き（上＝機首）', wx, y + 25, 494 - wx, 14, 10, false); }   // 矢印の意味 (風上ではなく風下 = 風が吹いていく向きを、機首を上にして示す)
+  x.textBaseline = 'top';
+}
+
 /** ルーム参加中のHUD下半分 (y=98〜)。ネット行1本 + 状態行 + 操作ヒント3行 + 警告行 + 最下行。位置合わせ中はヒントを手順表示に置き換える。 */
 function drawHudNet(x, ctrl, noPlane) {
   const now = performance.now(), W = 476;
@@ -987,11 +1028,13 @@ function drawHudNet(x, ctrl, noPlane) {
   let st = '', stCol = '#ffd479';
   if (ntc) st = ntc;
   else if (net.status === 'reconnecting') st = 'ルームサーバー切断：再接続中…（接続済みの相手とは継続）';
-  else if (ready && world.vr && net.role === 'pilot') { st = 'VRワールド：位置合わせは不要です'; stCol = '#8dffd8'; }
+  else if (ready && world.vr && net.role === 'pilot') { st = world.ex ? 'VRワールド：位置合わせは不要です' : ''; stCol = '#8dffd8'; }   // 自然は下の行に 位置安定・風 を出す
   else if (ready && align.kind === 0 && net.role === 'pilot') { st = sharedSp.diag === 'wait' ? '共有スペース待機中…　合わなければYで手動の位置合わせ' : 'Yボタンで位置合わせ（全員が同じ2点を同じ順で）'; stCol = '#b8c6d6'; }
   else if (ready && align.kind === 2) { st = '位置合わせ：手動（2点間 ' + cal.manual.d.toFixed(2) + ' m）'; stCol = '#8dffd8'; }
   else if (ready && align.kind === 1) { st = '位置合わせ：自動（共有スペース）'; stCol = '#8dffd8'; }
-  x.fillStyle = stCol; fitText(x, st, 18, 122, W, 18, 12, false);
+  const natHud = world.vr && !world.ex && net.role === 'pilot';
+  if (natHud) drawHudNatStrip(x, 120);                                 // 自然: 位置安定・風 (状態行の代わり。通知・再接続中は最下行へ)
+  else { x.fillStyle = stCol; fitText(x, st, 18, 122, W, 18, 12, false); }
   if (cal.active) {
     x.fillStyle = '#ffee66'; x.font = 'bold 19px sans-serif';
     const n = wrapText(x, calStepText(), 18, 154, W, 24, 2);
@@ -1003,9 +1046,15 @@ function drawHudNet(x, ctrl, noPlane) {
     x.fillStyle = '#b8c6d6';
     if (ctrl) {
       if (world.vr) {
-        fitText(x, 'A=自動/手動  B=離着陸  X=HUD  スティック=モード' + stickMode, 18, 146, W, 17, 11, false);
-        fitText(x, '右トリガー長押し=パッドへ帰還', 18, 166, W, 17, 12, false);
-        fitText(x, '右スティック長押し=ワールド切替　左スティック押込み=視点', 18, 186, W, 17, 11, false);
+        if (natHud) {
+          fitText(x, 'A=自動/手動  B=離着陸  X=HUD  Y=風  左トリガー=位置安定ON/OFF', 18, 156, W, 16, 11, false);
+          fitText(x, '右トリガー長押し=パッドへ帰還　左スティック押込み=視点', 18, 174, W, 16, 11, false);
+          fitText(x, '右スティック長押し=ワールド切替　スティック=モード' + stickMode, 18, 192, W, 16, 11, false);
+        } else {
+          fitText(x, 'A=自動/手動  B=離着陸  X=HUD  スティック=モード' + stickMode, 18, 146, W, 17, 11, false);
+          fitText(x, '右トリガー長押し=パッドへ帰還', 18, 166, W, 17, 12, false);
+          fitText(x, '右スティック長押し=ワールド切替　左スティック押込み=視点', 18, 186, W, 17, 11, false);
+        }
       } else {
         fitText(x, 'A=自動/手動  B=離着陸  X=HUD  Y=位置合わせ' + (align.kind === 2 ? '(長押し=解除)' : '') + '  モード' + stickMode, 18, 146, W, 17, 11, false);
         fitText(x, '右トリガー長押し=呼び戻し  左トリガー=ドローン視点', 18, 166, W, 17, 12, false);
@@ -1027,9 +1076,30 @@ function drawHudNet(x, ctrl, noPlane) {
     }
     if (warn) { x.fillStyle = '#ffd479'; fitText(x, warn, 18, 208, W, 18, 12, true); }
     if (vrHold.step > 0) drawHoldBar(x, 230, W);
+    else if (natHud && nat.noteT > 0) { x.fillStyle = '#ffd479'; fitText(x, nat.note, 18, 230, W, 18, 12, true); }
+    else if (natHud && (ntc || net.status === 'reconnecting')) { x.fillStyle = '#ffd479'; fitText(x, ntc || 'ルームサーバー切断：再接続中…', 18, 230, W, 18, 12, true); }
     else if (cal.msg && now < cal.msgUntil) { x.fillStyle = '#ff9a7a'; fitText(x, cal.msg, 18, 230, W, 18, 12, true); }
     else if (noPlane) { x.fillStyle = '#ffd479'; fitText(x, '壁未認識: 左スティック押込みで設定', 18, 230, W, 17, 12, false); }
   }
+}
+
+/** 自然 (ソロ) のHUD下半分: 位置安定・風の1行 + 凡例4行 + 最下行 (長押しの進捗 > 一言 > 通知)。 */
+function drawHudNat(x, ctrl) {
+  drawHudNatStrip(x, 88);
+  x.fillStyle = '#b8c6d6'; x.textBaseline = 'top';
+  if (ctrl) {
+    fitText(x, 'A=自動/手動  B=離着陸  X=HUD  Y=風', 18, 128, 476, 18, 11, false);
+    fitText(x, '左トリガー=位置安定ON/OFF　右トリガー長押し=パッドへ帰還', 18, 152, 476, 18, 11, false);
+    fitText(x, (stickMode === 1 ? 'モード1　左: 上下=前後 左右=旋回　右: 上下=昇降 左右=移動' : 'モード2　左: 上下=昇降 左右=旋回　右: 前後左右=移動'), 18, 176, 476, 18, 11, false);
+    fitText(x, '右スティック長押し=ワールド切替　左スティック押込み=視点', 18, 200, 476, 18, 11, false);
+  } else {
+    x.font = '20px sans-serif'; x.fillText('コントローラー未検出: 自動モード', 18, 128);
+    x.fillText('ピンチ(選択)で離陸/着陸', 18, 156);
+  }
+  const ntc = net.notice && performance.now() < net.noticeUntil ? net.notice : '';
+  if (vrHold.step > 0) drawHoldBar(x, 224, 476);
+  else if (nat.noteT > 0) { x.fillStyle = '#ffd479'; fitText(x, nat.note, 18, 224, 476, 19, 12, true); }
+  else if (ntc) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText(ntc, 18, 224); }
 }
 
 function drawHud(alt, spd, noPlane, ctrl) {
@@ -1050,6 +1120,7 @@ function drawHud(alt, spd, noPlane, ctrl) {
   x.fillStyle = '#ffffff'; fitText(x, '高度 ' + (alt / 100).toFixed(2) + ' m   速度 ' + (spd / 10).toFixed(1) + ' m/s' + (hud.dist >= 10 ? '   距離 ' + hud.dist + ' m' : ''), 18, 54, 476, 30, 16, true);   // 距離: 操縦者目線で機体が離れた時の目安
   x.fillStyle = '#b8c6d6'; x.font = '20px sans-serif';
   if (net.on) { try { drawHudNet(x, ctrl, noPlane); } catch (e) { /* HUDの下半分が欠けるだけ */ } hudTex.needsUpdate = true; return; }   // ルーム参加中は専用レイアウト
+  if (world.vr) { drawHudNat(x, ctrl); hudTex.needsUpdate = true; return; }   // 自然 (ソロ)
   if (ctrl) {
     // 凡例は世界ごとに切り替えて行数を抑える (左スティック押込みは MR=スペース設定 / VR=視点)
     fitText(x, (stickMode === 1 ? 'モード1　左: 上下=前後 左右=旋回　右: 上下=昇降 左右=移動' : 'モード2　左: 上下=昇降 左右=旋回　右: 前後左右=移動'), 18, 94, 476, 19, 11, false);
@@ -1076,10 +1147,10 @@ function updateHud(dt) {
   const noPlane = renderer.xr.isPresenting && planes.length === 0 && !world.vr, ctrl = input.hasController;
   const wl = worldLabel();
   const dist = world.vr && !world.ex && world.cam === 1 ? Math.round(Math.hypot(drone.position.x - eyeW.x, drone.position.y - eyeW.y, drone.position.z - eyeW.z)) : 0;   // 自然・操縦者目線: 自分の目から機体までの距離 [m] (1m刻み)
-  const exSig = world.ex ? exHudSig() : '';
+  const exSig = world.ex ? exHudSig() : '', nsg = natHudSig();
   const nsig = net.on || net.notice ? netHudSig() : '';       // ソロでは常に '' (描画判定に影響しない)
-  if (!hud.hudInit || dist !== hud.dist || exSig !== hud.exSig || alt !== hud.alt || spd !== hud.spd || sim.mode !== hud.mode || sim.state !== hud.state || noPlane !== hud.noPlane || ctrl !== hud.ctrl || nsig !== hud.nsig || wl !== hud.wl || vrHold.step !== hud.hold) {
-    hud.dist = dist; hud.exSig = exSig; hud.wl = wl; hud.hold = vrHold.step; hud.hudInit = true; hud.alt = alt; hud.spd = spd; hud.mode = sim.mode; hud.state = sim.state; hud.noPlane = noPlane; hud.ctrl = ctrl; hud.nsig = nsig;
+  if (!hud.hudInit || dist !== hud.dist || exSig !== hud.exSig || nsg !== hud.natSig || alt !== hud.alt || spd !== hud.spd || sim.mode !== hud.mode || sim.state !== hud.state || noPlane !== hud.noPlane || ctrl !== hud.ctrl || nsig !== hud.nsig || wl !== hud.wl || vrHold.step !== hud.hold) {
+    hud.dist = dist; hud.exSig = exSig; hud.natSig = nsg; hud.wl = wl; hud.hold = vrHold.step; hud.hudInit = true; hud.alt = alt; hud.spd = spd; hud.mode = sim.mode; hud.state = sim.state; hud.noPlane = noPlane; hud.ctrl = ctrl; hud.nsig = nsig;
     drawHud(alt, spd, noPlane, ctrl);
   }
 }
@@ -1484,6 +1555,7 @@ const vrw = {
   heights: null, pads: null, tn: 0, nx: 0, ny: 1, nz: 0,
   nTree: 0, tx: null, tz: null, ty: null, th: null, tr: null, tk: null, cellStart: null, cellIdx: null, gridN: 0,
   contacts: 0, treeHits: 0, buildMs: 0, compileMs: 0, errN: 0, stats: null, avoidY: 0, tick: 0,
+  poles: null, socks: null, cloudOff: null, cloudQ: null, cloudC: null, cloudF: null, cloudP: null,   // 吹き流し (ポール・本体) と雲の流れ (14b)
 };
 const VR_CELL = 16;                                          // 樹木の空間グリッド [m]
 const VR_SUN = new THREE.Vector3(-0.42, 0.58, -0.70).normalize();
@@ -1625,6 +1697,28 @@ function vrPadGeo() {                                        // 上面は 円(�
   return mergeGeos(parts);
 }
 
+/** 吹き流し用の geometry。ポール (静的): 高さ NAT_SOCK_H の細い柱。吹き流し (動的): 原点 = ポールの上端、+X へ細くなる橙/白の6区間の筒 (長さ NAT_SOCK_LEN)。
+ *  筒は両面を明示的に持つ (内側にも面を張る) ので、樹木・パッドと同じ材質 (FrontSide・flatShading・頂点色・インスタンス色) = 同じシェーダープログラムで描ける。 */
+function vrPoleGeo() {
+  const H = C.NAT_SOCK_H;
+  return mergeGeos([vrPaint(vrAt(new THREE.CylinderGeometry(0.05, 0.07, H, 6, 1, false), 0, H / 2, 0), 0xe9e9e4, 0), vrPaint(vrAt(new THREE.SphereGeometry(0.1, 6, 4), 0, H + 0.02, 0), 0xe9e9e4, 0)]);
+}
+function vrSockGeo() {
+  const L = C.NAT_SOCK_LEN, n = 6, seg = L / n, P = [], kr = L / 1.2;
+  for (let i = 0; i < n; i++) {
+    const r0 = (0.22 - 0.13 * (i / n)) * kr, r1 = (0.22 - 0.13 * ((i + 1) / n)) * kr;       // 口 0.22 → 先 0.09 [m] (長さ 1.2 m あたり。長さに比例)
+    P.push(vrPaint(vrAt(new THREE.CylinderGeometry(r1, r0, seg, 10, 1, true).rotateZ(-Math.PI / 2), seg * (i + 0.5), 0, 0), i & 1 ? 0xf6f6f2 : 0xff6a1a, 0));
+  }
+  const g = mergeGeos(P), pa = g.attributes.position.array, na = g.attributes.normal.array, ka = g.attributes.color.array, ia = g.index.array, nv = pa.length / 3;
+  const Pp = new Float32Array(pa.length * 2), Nn = new Float32Array(na.length * 2), Kk = new Float32Array(ka.length * 2), Ii = new Uint16Array(ia.length * 2);
+  Pp.set(pa); Pp.set(pa, pa.length); Kk.set(ka); Kk.set(ka, ka.length); Nn.set(na);
+  for (let i = 0; i < na.length; i++) Nn[na.length + i] = -na[i];
+  Ii.set(ia); for (let i = 0; i < ia.length; i += 3) { Ii[ia.length + i] = ia[i] + nv; Ii[ia.length + i + 1] = ia[i + 2] + nv; Ii[ia.length + i + 2] = ia[i + 1] + nv; }   // 内側 = 巻き順を逆に
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(Pp, 3)); out.setAttribute('normal', new THREE.BufferAttribute(Nn, 3)); out.setAttribute('color', new THREE.BufferAttribute(Kk, 3)); out.setIndex(new THREE.BufferAttribute(Ii, 1));
+  return out;
+}
+
 function vrBuildSky() {
   const mat = new THREE.ShaderMaterial({
     uniforms: { uHorizon: { value: new THREE.Color(0xcfe3ef) }, uZenith: { value: new THREE.Color(0x3f86d6) }, uGround: { value: new THREE.Color(0xa9c0bd) }, uSunDir: { value: VR_SUN.clone() }, uSunCol: { value: new THREE.Color(0xfff2d2) } },
@@ -1743,6 +1837,7 @@ function vrBuildWorld() {
   const mk = (geo, count) => { const m = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), Math.max(1, count)); m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.StaticDrawUsage); return m; };
   const mC = mk(vrConiferGeo(), nc), mB = mk(vrBroadGeo(), nb), mR = mk(vrRockGeo(), nr);
   mC.name = 'vrConifers'; mB.name = 'vrBroadleaf'; mR.name = 'vrRocks';
+  if (nat.sway.on) for (const m of [mC, mB]) { m.material.onBeforeCompile = natSwayBeforeCompile; nat.sway.mats.push(m.material); }   // 樹木の揺れ (14b)。針葉樹・広葉樹だけ (岩・パッドは元のシェーダーのまま)
   const meshes = [mC, mB, mR], cnts = [0, 0, 0], mm = new THREE.Matrix4(), qq = new THREE.Quaternion(), pp = new THREE.Vector3(), ss = new THREE.Vector3(), col = new THREE.Color();
   for (let i = 0; i < n; i++) {
     const k = tk[i], m = meshes[k];
@@ -1768,20 +1863,49 @@ function vrBuildWorld() {
   }
   pads.instanceMatrix.needsUpdate = true; pads.instanceColor.needsUpdate = true;
 
-  // --- 雲 (つぶした低ポリの塊を InstancedMesh 1本で) ---
-  const rc = vrRng(C.VR_SEED + 7), cl = [];
+  // --- 吹き流し (離着陸場の外周に NAT_SOCK_N 本。世界の中心から NAT_SOCK_R m・パッドの並ぶ方位 (k*π/8) のうち輪1の方位 (奇数 k) の延長上 = どのパッド・操縦位置・「操縦位置→パッド」の視線・離陸の柱からも 4 m 以上離れる。
+  //     ポールに当たり判定は無いので、機体が普通に飛ぶ所 (パッドの周り) には立てない。近くに樹木・岩があれば外へずらす。ポール = 静的な InstancedMesh、吹き流し = 毎フレーム向きと垂れを更新する InstancedMesh。計2ドローコール) ---
+  const NS = C.NAT_SOCK_N, poles = mk(vrPoleGeo(), NS), socks = mk(vrSockGeo(), NS), sockPos = new Float32Array(NS * 3);
+  socks.instanceMatrix.setUsage(THREE.DynamicDrawUsage); poles.name = 'vrPoles'; socks.name = 'vrSocks';
+  col.setRGB(1, 1, 1);
+  for (let s = 0; s < NS; s++) {
+    const k = (1 + s * 4) & 15, ux = VR_SIN16[k], uz = -VR_SIN16[(k + 4) & 15];
+    let rad = C.NAT_SOCK_R, px = ux * rad, pz = uz * rad;
+    for (let tries = 0; tries < 8; tries++) {                    // 樹木・岩の 2.5 m 以内なら 1.5 m ずつ外へ (配置は種で決まるので全端末で同じ結果)
+      let near = false;
+      for (let i = 0; i < n; i++) { const dx = tx[i] - px, dz = tz[i] - pz, lim = tr[i] + 2.5; if (dx * dx + dz * dz < lim * lim) { near = true; break; } }
+      if (!near) break;
+      rad += 1.5; px = ux * rad; pz = uz * rad;
+    }
+    const py = terrainAt(px, pz);
+    sockPos[s * 3] = px; sockPos[s * 3 + 1] = py + C.NAT_SOCK_H; sockPos[s * 3 + 2] = pz;
+    mm.compose(pp.set(px, py, pz), qq.identity(), ss.set(1, 1, 1)); poles.setMatrixAt(s, mm); poles.setColorAt(s, col);
+    mm.compose(pp.set(px, py + C.NAT_SOCK_H, pz), qq.identity(), ss.set(1, 1, 1)); socks.setMatrixAt(s, mm); socks.setColorAt(s, col);
+  }
+  poles.instanceMatrix.needsUpdate = true; poles.instanceColor.needsUpdate = true; socks.instanceMatrix.needsUpdate = true; socks.instanceColor.needsUpdate = true;
+  vrw.poles = poles; vrw.socks = socks; nat.sockPos = sockPos;
+
+  // --- 雲 (つぶした低ポリの塊を InstancedMesh 1本で)。塊 (クラスター) ごとに風下へ流し、世界の外へ出たら反対側へ回り込む (自然の風 14b の natFrame)。配置は v0.7 と同じ乱数列 ---
+  const rc = vrRng(C.VR_SEED + 7), cl = [], clc = [];
   for (let i = 0; i < 16; i++) {
     const a = rc() * 6.2832, d = 90 + rc() * 330, cx = Math.sin(a) * d, cz = -Math.cos(a) * d, cy = 100 + rc() * 55, np = 3 + ((rc() * 3) | 0);
-    for (let j = 0; j < np; j++) cl.push([cx + (rc() - 0.5) * 70, cy + (rc() - 0.5) * 6, cz + (rc() - 0.5) * 30, 22 + rc() * 28, 5 + rc() * 4, 14 + rc() * 14]);
+    clc.push(cx, cz);
+    for (let j = 0; j < np; j++) cl.push([cx + (rc() - 0.5) * 70, cy + (rc() - 0.5) * 6, cz + (rc() - 0.5) * 30, 22 + rc() * 28, 5 + rc() * 4, 14 + rc() * 14, i]);
   }
   const clouds = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x39445a, flatShading: true }), cl.length);
-  for (let i = 0; i < cl.length; i++) { const c = cl[i]; mm.compose(pp.set(c[0], c[1], c[2]), qq.setFromAxisAngle(Y_AXIS, rc() * 3), ss.set(c[3], c[4], c[5])); clouds.setMatrixAt(i, mm); }
-  clouds.frustumCulled = false; clouds.name = 'vrClouds'; vrw.clouds = clouds;
+  clouds.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+  const cOff = new Float32Array(cl.length * 7), cQ = new Float32Array(cl.length * 2), cC = new Float32Array(clc);
+  for (let i = 0; i < cl.length; i++) {
+    const c = cl[i], yaw = rc() * 3; mm.compose(pp.set(c[0], c[1], c[2]), qq.setFromAxisAngle(Y_AXIS, yaw), ss.set(c[3], c[4], c[5])); clouds.setMatrixAt(i, mm);
+    cOff[i * 7] = c[0] - clc[c[6] * 2]; cOff[i * 7 + 1] = c[1]; cOff[i * 7 + 2] = c[2] - clc[c[6] * 2 + 1]; cOff[i * 7 + 3] = c[3]; cOff[i * 7 + 4] = c[4]; cOff[i * 7 + 5] = c[5]; cOff[i * 7 + 6] = c[6];
+    cQ[i * 2] = qq.y; cQ[i * 2 + 1] = qq.w;
+  }
+  clouds.frustumCulled = false; clouds.name = 'vrClouds'; vrw.clouds = clouds; vrw.cloudOff = cOff; vrw.cloudQ = cQ; vrw.cloudC = cC; vrw.cloudF = new Float32Array(clc.length / 2); vrw.cloudP = new Float32Array(clc.length);
 
   const sky = vrBuildSky(); vrw.sky = sky;
   vrw.fog = new THREE.FogExp2(0xcfe3ef, C.VR_FOG);
   const group = new THREE.Group(); group.name = 'vrWorld';
-  group.add(sky, terrain, water, mC, mB, mR, pads, clouds);
+  group.add(sky, terrain, water, mC, mB, mR, pads, poles, socks, clouds);
   group.visible = false; scene.add(group); vrw.group = group;
   vrw.built = true; vrw.buildMs = performance.now() - t0;
   vrw.stats = { hmin, hmax, conifers: nc, broadleaf: nb, rocks: nr, tris: nt };
@@ -2116,10 +2240,18 @@ function windStop() {
   try { const t = ctx.currentTime; g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.linearRampToValueAtTime(0, t + 0.12); } catch (e) { /* ignore */ }
   setTimeout(() => { try { src.stop(); src.disconnect(); f.disconnect(); g.disconnect(); } catch (e) { /* ignore */ } }, 200);
 }
+const NAT_WIND_VOL = [0.014, 0.05, 0.095];                    // 自然の風音の基準音量 (無風 / 弱 / 中)。無風はほぼ無音 (機体の風切り音だけ)
 function windUpdate(now, speed) {
   if (!wind.src || now - wind.acc < 0.1) return;
   wind.acc = now;
   const t = wind.ctx.currentTime, k = Math.min(speed / 10, 1);
+  if (world.vr && !world.ex) {                              // 自然: 風の強さで音量が変わり、突風 (その高さの平均に対する風速の比) で強弱がつく。setTargetAtTime なのでクリックなし
+    const lv = ex.wind, mean = C.NAT_WIND_MEAN[lv], agl = pos.y - sim.groundY, kh = 1 + (C.NAT_WIND_GRAD - 1) * smoothstep(agl, C.NAT_WIND_H0, C.NAT_WIND_H1);
+    const gf = mean > 0 ? clamp(nat.wspd / (mean * kh), 0.4, 1.6) : 1, rel = Math.hypot(vel.x - nat.w.x, vel.y, vel.z - nat.w.z), vol = NAT_WIND_VOL[lv];
+    wind.gain.gain.setTargetAtTime(vol * (0.45 + 0.55 * gf) * (0.8 + 0.2 * kh) * (1 + 0.12 * Math.sin(now * 0.37)) + 0.07 * Math.min(rel / 10, 1), t, 0.3);
+    wind.filt.frequency.setTargetAtTime(330 + 120 * (0.5 + 0.5 * Math.sin(now * 0.23 + 1.0)) + 60 * rel + 70 * nat.wspd, t, 0.3);
+    return;
+  }
   wind.gain.gain.setTargetAtTime(0.045 + 0.03 * Math.sin(now * 0.37) + 0.02 * Math.sin(now * 0.91 + 1.3) + 0.07 * k, t, 0.3);
   wind.filt.frequency.setTargetAtTime(350 + 160 * (0.5 + 0.5 * Math.sin(now * 0.23 + 1.0)) + 60 * speed, t, 0.3);
 }
@@ -2221,6 +2353,7 @@ function applyWorld(w) {
     world.id = id; world.vr = true; world.ex = id === 2; Object.assign(P, id === 2 ? P_EX : P_VR);
     vrSceneLook(id);
     if (id === 2) exEnter();                                   // 試験場の状態 (課題・始動・風・判定) を初期化
+    else natEnter();                                           // 自然: 位置安定は必ず ON・風は 0 から
     vrPlaceAtHome(); landHere();
     rigS.init = false; rigS.keep = false; rigS.vig = 0;
     if (from === 0) windStart();
@@ -2250,7 +2383,7 @@ function vrReset() {
   rig.position.set(0, 0, 0); rig.quaternion.identity(); rig.scale.set(1, 1, 1); rig.updateMatrixWorld(true);
   camera.position.set(0, 0, 0); camera.quaternion.identity();
   vigQuad.visible = false; vigMat.opacity = 0;
-  mrSave.ok = false;
+  mrSave.ok = false; nat.hold = true; nat.brake = false; nat.landFf = 0;
 }
 
 /** 右スティック押込みの長押し (実時間 VR_HOLD_S)。長押し中は HUD に進捗を出す。 */
@@ -2271,7 +2404,7 @@ function vrFrame(dt, now) {
     vrFadeStep(dt);
     if (world.vr) {
       vrUpdateRig(dt);
-      if (world.ex) exw.sky.position.copy(eyeW); else { vrw.sky.position.copy(eyeW); vrw.clouds.rotation.y = now * 0.004; }
+      if (world.ex) exw.sky.position.copy(eyeW); else { vrw.sky.position.copy(eyeW); natFrame(dt, now, false); }
       windUpdate(now, vel.length());
       vrDepthRange();
       pilotScaleUpdate();                                      // 操縦者目線 (自然): 遠い機体を拡大 (他機と同じ式)
@@ -2279,6 +2412,178 @@ function vrFrame(dt, now) {
     }
     vrUpdateOverlays(dt);
   } catch (e) { vrFail(e); }
+}
+
+/* =====================================================================
+ * 14b. 自然の位置安定 (ATTI) と風
+ *   ・位置安定 (nat.hold): ON = 従来どおりの速度/位置ホールド。OFF = 試験場の位置安定OFF (ATTI) と同じ実装 (attiNow / attiControl / windVelStep) を共用し、
+ *     スティック = 傾き (P_VR.ATTI_TILT = 25°)・水平の位置/速度ホールドなし・空気抵抗だけで惰性・高度は保持・ヨーは通常。自然に入るたびに ON。
+ *     左トリガー (短押し) / キーボード G で切替。OFF の間は AUTO 周遊 (A) と帰還 (右トリガー) は使えない。B の自動離着陸は使える (上下だけ自動。水平は風まかせ)。
+ *     OFF→ON は制動 (nat.brake): 惰性の速度を傾き上限で 0 近くまで落としてから、止まった所で位置ホールドへ入る (行き過ぎて戻らない)。OFF の自動着陸は、流される先の地面が下がる分だけ余計に降りる (nat.landFf)。
+ *   ・風 (nat.w): 強さは試験場と同じ3段階 (ex.wind = 開始画面 / ?wind= / 左Y)。値は自然用 (C.NAT_WIND_*)。平均 × 高度の増し (地上 ×1 → 60 m 以上 ×2) × 突風 (±40%・周期 5.6〜13 s) × 乱れ (±8%・約1 Hz)。
+ *     向きは常風向 (nat.prev) から ±30° でゆっくり揺らぐ。すべて (種 nat.wp / nat.prev, 時刻 nat.wt, 高度) だけで決まる (乱数・確保なし)。
+ *     種: ルーム参加中はルーム名のハッシュ (全員同じ常風向・位相) / ソロはセッションごとの種。風の強さは各パイロットが自分で選ぶ。
+ *   ・見た目: 吹き流し (風向・風速で向きと垂れ)・雲の流れ・風音・中のわずかな霞。風そのものの物理は windVelStep (空気抵抗は対気速度に対して)。
+ * ===================================================================== */
+const NW_TAU = 6.283185307179586;
+const nat = {
+  hold: true,
+  w: new THREE.Vector3(), wEst: new THREE.Vector3(), wDot: new THREE.Vector3(), wFf: new THREE.Vector3(),   // ex と同じ形 (windVelStep が共用): 本当の風 / 推定 / 推定の変化率 / 位置安定の補償に使う値
+  wt: 0, wspd: 0,                                          // 風の時計 [s] (物理ステップで進む) / 機体の高さでの風速 [m/s]
+  wp: new Float64Array(8), prev: 0, key: '\u0000', session: ((Date.now() >>> 0) ^ 0x9e3779b9) | 0,   // 位相 / 常風向 [rad] (風が吹いていく向き = (cos, 0, sin)) / 種の出所 ('' = セッション) / セッションの種
+  brake: false, landFf: 0, gPrev: 0, fxOff: false, fxErr: '',   // OFF→ON の制動中 / OFFの着陸で降下に足す速さ [m/s] / 1つ前のステップの地面の高さ / 見た目の更新で例外が出たので止めた (飛行は続く) / その例外
+  note: '', noteT: 0, noteId: 0, recallPrev: false,        // HUDの一言 (残り秒)
+  sockPos: null, cx: 0, cz: 0, haze: 0, frameN: 0,         // 吹き流しの位置 (x,y,z × NAT_SOCK_N) / 雲の流れた量 [m] / 霧の増分 / 
+  sway: { on: C.NAT_TREE_SWAY || NAT_SWAY_Q, t: { value: 0 }, a: { value: new THREE.Vector3() }, checked: false, ok: true, mats: [] },   // 樹木の揺れ (頂点シェーダーの uniform。針葉樹・広葉樹の材質だけ)
+  sock: { sp: 0, yaw: 0, droop: 0 },                       // 直近の吹き流しの風速・向き・垂れ (検証用)
+};
+/** 呼び戻しが使えるか (自然で位置安定OFFの間は使えない)。 */
+const recallOk = () => !(world.vr && !world.ex && !nat.hold);
+/** OFF→ON の制動を続けるか: 自然・位置安定ON・飛行中で、水平の速さが NAT_BRAKE_V より大きい間だけ。それ以外になったら制動を終える (control がそのステップから位置ホールドへ入る)。 */
+function natBraking() {
+  if (world.id === 1 && nat.hold && sim.state !== ST_LANDED && vel.x * vel.x + vel.z * vel.z > C.NAT_BRAKE_V * C.NAT_BRAKE_V) return true;
+  nat.brake = false; return false;
+}
+/** 種を決める: ルーム参加中はルーム名のハッシュ (全員同じ) / それ以外はセッションの種。key が変わった時だけ作り直す。 */
+function natReseed() {
+  const key = net.on && net.hash ? net.hash : '';
+  if (key === nat.key) return;
+  nat.key = key;
+  let s = nat.session;
+  if (key) { s = 0x1f3a5c7; for (let i = 0; i < key.length; i++) s = (Math.imul(s, 31) + key.charCodeAt(i)) | 0; }
+  const r = vrRng(s ^ 0x2f6b9d1);
+  nat.prev = r() * NW_TAU; for (let i = 0; i < 8; i++) nat.wp[i] = r() * NW_TAU;
+}
+/** セッションの種を差し替える (検証用)。ルーム参加中は無視される (ルーム名の種が優先)。 */
+function natSetSeed(s) { nat.session = s | 0; nat.key = '\u0000'; natReseed(); }
+/** 時刻 t・地上高 agl での風 (風が吹いていく向きのベクトル) を out へ、風速を返す。確保なし。 */
+function natWindAt(t, agl, out) {
+  const mean = C.NAT_WIND_MEAN[ex.wind];
+  if (!(mean > 0)) { out.set(0, 0, 0); return 0; }
+  const p = nat.wp;
+  const g = 0.5 * Math.sin(NW_TAU * t / 13.0 + p[0]) + 0.3 * Math.sin(NW_TAU * t / 8.3 + p[1]) + 0.2 * Math.sin(NW_TAU * t / 5.6 + p[2]);          // 突風 -1..1 (周期 5.6〜13 s)
+  const r = 0.55 * Math.sin(NW_TAU * t / 110 + p[3]) + 0.3 * Math.sin(NW_TAU * t / 57 + p[4]) + 0.15 * Math.sin(NW_TAU * t / 29 + p[5]);            // 向きのゆらぎ -1..1 (周期 29〜110 s = ゆっくりしたランダムウォーク風)
+  const tb = 0.6 * Math.sin(NW_TAU * t / 1.3 + p[6]) + 0.4 * Math.sin(NW_TAU * t / 0.7 + p[7]);                                                      // 乱れ -1..1 (約 1 Hz)
+  const k = 1 + (C.NAT_WIND_GRAD - 1) * smoothstep(agl, C.NAT_WIND_H0, C.NAT_WIND_H1);
+  const sp = Math.max(0, mean * k * (1 + C.NAT_WIND_GUST * g) * (1 + C.NAT_WIND_TURB * tb));
+  const ph = nat.prev + C.NAT_WIND_DIR * (0.9 * r + 0.1 * tb);                                                                                     // 常風向 ± 30°
+  out.set(sp * Math.cos(ph), 0, sp * Math.sin(ph)); return sp;
+}
+/** 物理ステップの前 (自然): 風を進める・位置安定OFFとモードの整合・帰還の注記・HUDの一言の時計。 */
+function natPre(dt) {
+  natReseed();
+  nat.wt += dt;
+  const agl = pos.y - sim.groundY;
+  nat.wspd = natWindAt(nat.wt, agl < 0 ? 0 : agl, nat.w);
+  if (!nat.hold && sim.mode === MODE_AUTO) sim.mode = MODE_MANUAL;       // OFF の間は AUTO にならない (万一 AUTO のままなら手動へ)
+  const gy = sim.groundY;                                              // OFF の着陸: 真下の地面が下がっていく速さ (1つ前のステップとの差。なめらかに追う。上限 NAT_LAND_FF)
+  if (!nat.hold && sim.state === ST_LANDING) nat.landFf += (clamp((nat.gPrev - gy) / dt, 0, C.NAT_LAND_FF) - nat.landFf) * Math.min(1, dt * 5); else nat.landFf = 0;
+  nat.gPrev = gy;
+  const rc = input.recall; if (rc && !nat.recallPrev && !nat.hold && !world.ex) natNote('位置安定OFF中は帰還不可'); nat.recallPrev = rc;
+  if (nat.noteT > 0) nat.noteT -= dt;
+}
+function natNote(txt) { nat.note = txt; nat.noteT = 2.5; nat.noteId++; }
+/** 位置安定の切替。OFF→ON は、その瞬間の速度から滑らかに止まる (OFF の間はホールド目標を持たない = 古い点へ戻らない)。ON→OFF で AUTO なら手動へ戻す。 */
+function natSetHold(on) {
+  on = !!on; if (nat.hold === on) return;
+  nat.hold = on; nat.brake = on && sim.state !== ST_LANDED;
+  sim.holdXZ = false; pidPx.reset(); pidPz.reset(); pidVx.reset(); pidVz.reset();
+  if (!on && sim.mode === MODE_AUTO) { sim.mode = MODE_MANUAL; natNote('位置安定OFF: 手動に切り替えました'); }
+  else natNote(on ? '位置安定 ON（その場で止まります）' : '位置安定 OFF（スティック=傾き。止まらず風に流されます）');
+  exBeep(on ? 880 : 520, 0.09, 0.12);
+}
+function natToggleAtti() { if (world.vr && !world.ex && fade.phase === 0) natSetHold(!nat.hold); }
+/** 風の強さを 無風→弱→中 の順に切り替える (開始画面の選択・試験場と共通の設定。保存される)。 */
+function natCycleWind() {
+  if (!world.vr || world.ex || fade.phase !== 0) return;       // 切替の暗転中の押下は捨てる
+  exSetWind((ex.wind + 1) % 3, true); exBeep(700, 0.08, 0.12);
+  natNote('風: ' + EX_WIND_NAME[ex.wind] + (ex.wind ? '（地上の平均 ' + C.NAT_WIND_MEAN[ex.wind] + ' m/s・上空ほど強い）' : ''));
+}
+/** 自然に入る時: 位置安定は必ず ON、風の状態は 0 から。 */
+function natEnter() {
+  nat.hold = true; nat.wt = 0; nat.wspd = 0; nat.w.set(0, 0, 0); nat.wEst.set(0, 0, 0); nat.wDot.set(0, 0, 0); nat.wFf.set(0, 0, 0);
+  nat.note = ''; nat.noteT = 0; nat.recallPrev = false; nat.brake = false; nat.landFf = 0; nat.gPrev = sim.groundY; natReseed();
+}
+/** HUD用: 風が機首に対してどちらへ吹くか [rad] (0 = 機首方向へ押される / +π/2 = 右へ押される)。 */
+function natWindRel() {
+  const s = Math.sin(sim.yaw), c = Math.cos(sim.yaw), w = nat.w;
+  return Math.atan2(w.x * c - w.z * s, -w.x * s - w.z * c);
+}
+/** HUDの再描画判定用の数値 (自然以外は 0)。位置安定・風の強さ・風速(0.1刻み)・矢印の向き(15°刻み)・一言。 */
+function natHudSig() {
+  if (!world.vr || world.ex) return 0;
+  const a = ((Math.round(natWindRel() / (Math.PI / 12)) % 24) + 24) % 24;
+  return 1 + (nat.hold ? 1 : 0) + 2 * ex.wind + 6 * Math.round(nat.wspd * 10) + 6000 * a + 150000 * (nat.noteT > 0 ? nat.noteId % 1000 + 1 : 0);
+}
+
+/* ---- 見た目: 吹き流し・雲・霧・風音 (毎フレーム。確保なし) ---- */
+/** 樹木の揺れ (頂点シェーダー): 針葉樹・広葉樹の材質の project_vertex の直後で、頂点を風下へ (根元は動かず、梢ほど大きく) ずらす。ドローコール・ジオメトリは増えない。
+ *  ずらす量はビュー空間で足す (インスタンス行列の回転・スケールに左右されない)。木ごとの位相は instanceMatrix の平行移動から。針葉樹と広葉樹は同じシェーダープログラムを共有する。 */
+function natSwayBeforeCompile(sh) {
+  sh.uniforms.uSwayT = nat.sway.t; sh.uniforms.uSwayA = nat.sway.a;
+  sh.vertexShader = 'uniform float uSwayT;\nuniform vec3 uSwayA;\n' + sh.vertexShader.replace('#include <project_vertex>',
+    '#include <project_vertex>\n  {\n    float hh = clamp( transformed.y, 0.0, 1.0 );\n    float ph = instanceMatrix[ 3 ].x * 0.31 + instanceMatrix[ 3 ].z * 0.17;\n'
+    + '    float sw = ( 0.65 + 0.35 * sin( uSwayT * 1.7 + ph ) ) * hh * hh;\n    mvPosition.xyz += mat3( viewMatrix ) * ( uSwayA * sw );\n    gl_Position = projectionMatrix * mvPosition;\n  }');
+}
+/** 最初の描画の後に1回: 揺れ付きのシェーダーがリンクできていなければ (diagnostics.runnable === false) 揺れをやめて元の材質に戻す (樹木が消えないための保険)。 */
+function natSwayCheck() {
+  const sw = nat.sway; sw.checked = true;
+  try {
+    for (const m of sw.mats) {
+      const pr = renderer.properties.get(m).currentProgram;
+      if (pr && pr.diagnostics && pr.diagnostics.runnable === false) { sw.ok = false; }
+    }
+    if (!sw.ok) for (const m of sw.mats) { m.onBeforeCompile = () => {}; m.customProgramCacheKey = () => 'nosway'; m.needsUpdate = true; }
+  } catch (e) { /* 判定できなければそのまま */ }
+}
+const _nM = new THREE.Matrix4(), _nP = new THREE.Vector3(), _nS = new THREE.Vector3(), _nQ = new THREE.Quaternion(), _nQz = new THREE.Quaternion(), _nW = new THREE.Vector3(), _nZ = new THREE.Vector3(0, 0, 1);
+/** 吹き流しの向きと垂れ: 風下へ向き、風が弱いほど垂れて短い。かすかなはためき (1本ごとの位相)。全 NAT_SOCK_N 本を同じ式で更新する。 */
+function natSocks(now) {
+  const sp = natWindAt(nat.wt, C.NAT_SOCK_H, _nW);
+  const yaw0 = sp > 0.02 ? Math.atan2(-_nW.z, _nW.x) : -nat.prev;       // 無風: 常風向へだらりと向く
+  const lift = smoothstep(sp, 0.15, 2.6), droop0 = 1.35 * (1 - lift), ext = 0.72 + 0.28 * lift, fl = 0.35 + 0.65 * smoothstep(sp, 0.2, 1.6);
+  nat.sock.sp = sp; nat.sock.yaw = yaw0; nat.sock.droop = droop0;
+  const m = vrw.socks, sk = nat.sockPos;
+  for (let i = 0, ns = C.NAT_SOCK_N; i < ns; i++) {
+    const ph = now * 6.3 + i * 1.7, yaw = yaw0 + 0.045 * fl * Math.sin(now * 4.1 + i * 2.3), droop = clamp(droop0 + 0.10 * fl * Math.sin(ph) + 0.05 * fl * Math.sin(now * 11.0 + i), 0, 1.45);
+    _nQ.setFromAxisAngle(Y_AXIS, yaw); _nQz.setFromAxisAngle(_nZ, -droop); _nQ.multiply(_nQz);
+    _nM.compose(_nP.set(sk[i * 3], sk[i * 3 + 1], sk[i * 3 + 2]), _nQ, _nS.set(ext, 1, 1)); m.setMatrixAt(i, _nM);
+  }
+  m.instanceMatrix.needsUpdate = true;
+}
+/** 雲を風下 (常風向) へ流す。塊ごとに世界の外へ出たら反対側へ回り込む (縁の手前で小さくなって消え、反対側から大きくなって現れる)。 */
+function natClouds(dt) {
+  const v = C.NAT_CLOUD_V[ex.wind], R = C.NAT_CLOUD_R, R2 = R * 2;
+  nat.cx = (nat.cx + Math.cos(nat.prev) * v * dt) % R2; nat.cz = (nat.cz + Math.sin(nat.prev) * v * dt) % R2;
+  const cC = vrw.cloudC, F = vrw.cloudF, CP = vrw.cloudP, off = vrw.cloudOff, cq = vrw.cloudQ, m = vrw.clouds;
+  for (let c = 0, nc = F.length; c < nc; c++) {
+    let x = cC[c * 2] + nat.cx, z = cC[c * 2 + 1] + nat.cz;
+    x -= Math.floor((x + R) / R2) * R2; z -= Math.floor((z + R) / R2) * R2;       // [-R, R) へ回り込む
+    CP[c * 2] = x; CP[c * 2 + 1] = z; F[c] = Math.max(0.001, smoothstep(R - Math.abs(x), 0, 90) * smoothstep(R - Math.abs(z), 0, 90));
+  }
+  for (let i = 0, n = m.count; i < n; i++) {
+    const o = i * 7, c = off[o + 6] | 0, f = F[c];
+    _nQ.set(0, cq[i * 2], 0, cq[i * 2 + 1]);
+    _nM.compose(_nP.set(CP[c * 2] + off[o], off[o + 1], CP[c * 2 + 1] + off[o + 2]), _nQ, _nS.set(off[o + 3] * f, off[o + 4] * f, off[o + 5] * f)); m.setMatrixAt(i, _nM);
+  }
+  m.instanceMatrix.needsUpdate = true;
+}
+/** 毎フレーム (自然・パイロットも観戦も): 吹き流し・雲・霧。観戦(PC)は物理が無いので風の時計をここで進める。 */
+function natFrame(dt, now, spectator) {
+  if (!vrw.built || !vrw.socks || nat.fxOff) return;
+  try { natFrameBody(dt, now, spectator); } catch (e) { nat.fxOff = true; nat.fxErr = String(e); }   // 見た目だけの更新。万一の例外で VR を落とさない (以後この更新だけ止める。飛行・風の物理は続く)
+}
+function natFrameBody(dt, now, spectator) {
+  natReseed();
+  if (spectator) nat.wt += dt;
+  natSocks(now);
+  natClouds(dt);
+  if (nat.sway.on && nat.sway.ok) {                       // 樹木の揺れ: 約12 m の高さの風 × 0.06 [m] を梢の揺れ幅に
+    const sw = nat.sway; sw.t.value = now; natWindAt(nat.wt, 12, _nW); sw.a.value.set(_nW.x * 0.06, 0, _nW.z * 0.06);
+    if (!sw.checked && ++nat.frameN > 3) natSwayCheck();
+  }
+  const hz = C.NAT_FOG_HAZE[ex.wind];                         // 霧: 中でわずかに濃く (密度の uniform を変えるだけ = シェーダーの再コンパイルなし)
+  if (Math.abs(hz - nat.haze) > 1e-5) { nat.haze += (hz - nat.haze) * (1 - Math.exp(-dt / 4)); vrw.fog.density = C.VR_FOG * (1 + nat.haze); }
 }
 
 /* =====================================================================
@@ -2848,16 +3153,17 @@ function exPre(dt) {
   ex.wt += dt; ex.wspd = exWindAt(ex.wt, ex.w);
   if (sim.mode === MODE_AUTO && ex.demo && (Math.abs(input.lx) > 0.3 || Math.abs(input.ly) > 0.3 || Math.abs(input.rx) > 0.3 || Math.abs(input.ry) > 0.3)) exDemoStop();
 }
-/** 空気抵抗 (風を引いた対気速度に対して) と推力による速度更新。MR/自然の式と同形で、風が0なら同じ。位置安定OFF (ATTI) は抵抗が小さい (実機は惰性で流れる)。
+/** 空気抵抗 (風を引いた対気速度に対して) と推力による速度更新。MR/自然の式と同形で、風が0なら同じ演算。試験場 (wd = ex) と自然 (wd = nat) で共用する (wd は w/wEst/wDot/wFf を持つ風の状態)。
+ *  位置安定OFF (ATTI) は抵抗が小さい (kd = P.ATTI_DRAG。実機は惰性で流れる)。
  *  あわせて位置安定ON用の風の推定値 wEst を更新する: 自機の水平加速度 (IMU相当) と「推定した風での予測」の残差から、時定数 EX_WIND_EST_TAU で追う。
+ *  ke = 推定側の抵抗係数 (試験場は 1 のまま = 従来どおり。自然はATTI中も kd と同じにして、ATTI→ONの瞬間に推定がずれていないようにする)。
  *  使うのは今のステップまでの自機の運動だけ (先の風は見ない = 因果的)。 */
 const EX_WA = 1 - Math.exp(-C.DT / C.EX_WIND_EST_TAU), EX_WLEAD = 2 * C.EX_WIND_EST_TAU + C.LAG_ATT;
-function exVelStep(dt, ux, uy, uz) {
-  const kd = exAtti() ? C.EX_ATTI_DRAG : 1;
-  const rx = vel.x - ex.w.x, ry = vel.y, rz = vel.z - ex.w.z, drag = (C.DRAG_LIN + P.DRAG_QUAD * Math.sqrt(rx * rx + ry * ry + rz * rz)) * kd;
+function windVelStep(wd, dt, ux, uy, uz, kd, ke) {
+  const w = wd.w, rx = vel.x - w.x, ry = vel.y, rz = vel.z - w.z, drag = (C.DRAG_LIN + P.DRAG_QUAD * Math.sqrt(rx * rx + ry * ry + rz * rz)) * kd;
   const ax = ux * sim.thrust - drag * rx, az = uz * sim.thrust - drag * rz;
-  const e = ex.wEst, hx = vel.x - e.x, hz = vel.z - e.z, dh = C.DRAG_LIN + P.DRAG_QUAD * Math.sqrt(hx * hx + ry * ry + hz * hz), k = EX_WA / dh;
-  const px = e.x, pz = e.z, f = ex.wFf, d = ex.wDot;
+  const e = wd.wEst, hx = vel.x - e.x, hz = vel.z - e.z, dh = (C.DRAG_LIN + P.DRAG_QUAD * Math.sqrt(hx * hx + ry * ry + hz * hz)) * ke, k = EX_WA / dh;
+  const px = e.x, pz = e.z, f = wd.wFf, d = wd.wDot;
   e.x = clamp(e.x + (ax - (ux * sim.thrust - dh * hx)) * k, -8, 8); e.z = clamp(e.z + (az - (uz * sim.thrust - dh * hz)) * k, -8, 8);
   d.x += ((e.x - px) / dt - d.x) * EX_WA; d.z += ((e.z - pz) / dt - d.z) * EX_WA;                 // 推定値の変化率 (平滑化)
   f.x = e.x + clamp(d.x, -3, 3) * EX_WLEAD; f.z = e.z + clamp(d.z, -3, 3) * EX_WLEAD;               // 補償に使う値 = 推定値を「推定の遅れ + 姿勢の遅れ」の分だけ外挿 (過去の傾向からの予測。先の風は見ない)
@@ -2865,13 +3171,17 @@ function exVelStep(dt, ux, uy, uz) {
   vel.y += (uy * sim.thrust - C.G - drag * ry) * dt;
   vel.z += az * dt;
 }
-/** 位置安定OFF (ATTI相当): 手動かつ飛行中。スティック = 傾き (全開 EX_ATTI_TILT = 20°)、離せば傾きが戻り惰性と風で流れる。高度は保持 (気圧高度の保持に相当)。 */
+/** 位置安定OFF (ATTI相当) か。試験場: 手動かつ飛行中でホールドOFF。自然: 位置安定OFFで着陸中以外 (自動離着陸中も水平は何もしない = 風で流れる)。 */
 const exAtti = () => !ex.hold && sim.mode === MODE_MANUAL && sim.state === ST_FLYING;
-function exControlAtti(dt) {
+const attiNow = () => (world.ex ? exAtti() : world.vr && !nat.hold && sim.state !== ST_LANDED);
+/** ATTI: スティック = 傾き (全開 P.ATTI_TILT。試験場 20° / 自然 25°)、離せば傾きが戻り惰性と風で流れる。高度は保持 (気圧高度の保持に相当)。ヨーは通常どおり (yawCmd)。
+ *  自然の自動離陸・着陸中 (sim.state が飛行中以外) はスティックの傾きを無視して水平を保つ (上下だけ自動。水平は風まかせ)。 */
+function attiControl(dt) {
   sim.holdXZ = false;
   if (Math.abs(vCmd.y) > 0.02) { sim.holdY = false; aDes.y = pidVy.step(vCmd.y - vel.y, 0, dt); }
   else { if (!sim.holdY) { sim.holdY = true; tgt.y = pos.y + vel.y * 0.35; pidPy.reset(); } aDes.y = pidPy.step(tgt.y - pos.y, -vel.y, dt); }
-  pitchCmd = input.ry * C.EX_ATTI_TILT; rollCmd = input.rx * C.EX_ATTI_TILT;       // 前 = 機首下げ(+) / 右 = 右傾き(+): 機体の向きに対する操作
+  const fly = sim.state === ST_FLYING;
+  pitchCmd = fly ? input.ry * P.ATTI_TILT : 0; rollCmd = fly ? input.rx * P.ATTI_TILT : 0;       // 前 = 機首下げ(+) / 右 = 右傾き(+): 機体の向きに対する操作
   const ty = Math.max(C.G + aDes.y, 0.3 * C.G), cs = Math.cos(pitchCmd) * Math.cos(rollCmd);
   sim.thrustCmd = clamp(ty / cs, 0, 2.0 * C.G);
 }
@@ -3764,7 +4074,7 @@ function readXRInputs(session, xrFrame, ref) {
       if (edge('X', !!(b[4] && b[4].pressed))) toggleHud();
       const lt = !!(b[0] && b[0].pressed);
       if (world.ex) { prevBtn.L = lt; exLTrig(lt); }               // 試験場: 左トリガー 短押し = 本番/補助表示、1 秒長押し = やり直し
-      else { exLTrig(false); if (edge('L', lt) && !world.vr) toggleMonitor(); }   // 左トリガー = ドローン視点モニター (自然では無効: モニターは部屋モデル用)
+      else { exLTrig(false); if (edge('L', lt)) { if (!world.vr) toggleMonitor(); else natToggleAtti(); } }   // 左トリガー = MR: ドローン視点モニター / 自然: 位置安定 ON/OFF (短押し)
       if (edge('LS', !!(b[3] && b[3].pressed))) {                // 左スティック押込み: VR=一人称/三人称の切替 / MR=スペース設定 (平面が無い時のみ)
         if (fade.phase !== 0) { /* 切替の暗転中の押下は捨てる (同じ押下が切替後の世界の意味で働かないように) */ }
         else if (world.vr) vrRequestCam(); else if (planes.length === 0) startRoomCapture(session);
@@ -3772,7 +4082,9 @@ function readXRInputs(session, xrFrame, ref) {
       const yp = !!(b[5] && b[5].pressed);
       exYBtn(yp);                                                 // 試験場: 左Y = 科目の切替 (着陸して停止中のみ) / フリー練習では 1 秒長押し = 位置安定 ON/OFF。他のワールドでは何もしない
       if (world.ex) prevBtn.Y = yp;                               // (MRへ戻った時に、押したままのYが位置合わせの開始にならないよう状態だけ追う)
-      else if (net.on && net.role === 'pilot') { if (world.vr) prevBtn.Y = yp; else netLeftY(yp); }   // 左Y = 位置合わせの開始/中止・長押しで手動解除 (ルーム参加時のMRのみ。VRは位置合わせ不要)
+      else if (world.vr) { if (edge('Y', yp)) natCycleWind(); }   // 自然: 左Y = 風の強さ (無風→弱→中)。ルーム参加中でも VR は位置合わせ不要なので競合しない
+      else if (net.on && net.role === 'pilot') netLeftY(yp);      // 左Y = 位置合わせの開始/中止・長押しで手動解除 (ルーム参加時のMRのみ。VRは位置合わせ不要)
+      else prevBtn.Y = yp;                                        // MR (ソロ): 何もしない。状態だけ追う (押したまま自然へ入った時に、その押下で風の強さが変わらないように)
     } else if (s.handedness === 'right') {
       gotR = true; input.rx = shape(sx); if (stickMode === 1) input.ly = shape(-sy); else input.ry = shape(-sy);   // 前=前進(モード2)/上昇(モード1), 右=右移動
       if (edge('A', !!(b[4] && b[4].pressed))) toggleMode();
@@ -3802,8 +4114,8 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'KeyV') { if (!world.vr) toggleMonitor(); }
   else if (e.code === 'KeyN') vrRequestWorld((world.id + 1) % 3);   // デスクトップ: MRプレビュー → 自然 → 試験場 → MR
   else if (e.code === 'KeyC') vrRequestCam();               // VR中: 操縦者目線 ⇄ 機体目線 (FPV)
-  else if (e.code === 'KeyY') { if (world.ex) exCycleItem(); }      // 試験場: 科目の切替 (着陸して停止中のみ)
-  else if (e.code === 'KeyG') { if (world.ex) exToggleDisp(); }     // 試験場: 本番 ⇄ 補助表示
+  else if (e.code === 'KeyY') { if (world.ex) exCycleItem(); else natCycleWind(); }      // 試験場: 科目の切替 (着陸して停止中のみ) / 自然: 風の強さ (無風→弱→中)
+  else if (e.code === 'KeyG') { if (world.ex) exToggleDisp(); else natToggleAtti(); }     // 試験場: 本番 ⇄ 補助表示 / 自然: 位置安定 ON/OFF
   else if (e.code === 'KeyU') { if (world.ex) exRestartHold(); }    // 試験場: やり直し
   else if (e.code === 'KeyK') { if (world.ex) exToggleHold(); }     // 試験場 (フリー練習): 位置安定 ON/OFF
 });
@@ -3900,6 +4212,7 @@ function frameBody(time, xrFrame) {
   if (!placed && head.valid) placeDroneInitial();
   if (xr && !input.hasController && world.ex) noCtrlT = 0;   // 試験場: コントローラーを見失っても AUTO (= お手本飛行) にしない。スティックは中立のまま (位置安定ONならその場で静止、OFFなら惰性と風で流れる)。試行はそのまま続く
   else if (xr && !input.hasController) {
+    if (world.vr && !world.ex && !nat.hold) natSetHold(true);   // 自然で位置安定OFFのままコントローラーを置いた: ハンドトラッキングはAUTO固定なので位置安定ONへ戻す
     sim.mode = MODE_AUTO;                                    // ハンドトラッキング時はAUTO固定
     noCtrlT = sim.state === ST_LANDED && !autoTakeoffDone ? noCtrlT + dt : 0;   // 自動離陸はセッション中1回だけ (ピンチで着陸させた後に勝手に再離陸しない)
     if (noCtrlT > C.AUTO_TAKEOFF_DELAY) { noCtrlT = 0; toggleFlight(); }
@@ -4454,7 +4767,7 @@ function newPs(slot) {
     sp: new THREE.Vector3(), sq: new THREE.Quaternion(), sh: new THREE.Vector3(), shYaw: 0, srpm: 0,     // 補間結果 (共有座標)
     drone: null, fade: 0, shown: false, dist: 1e9, monD: null, monU: null, user: null, specAl: true, row: null,
     planes: null, plRev: -1, plN: 0, plGot: 0, plTmp: null, planesVer: 0, plKind: 0, plId: '', rowSig: '',
-    exItem: 0, exHold: true, exFpv: false, exScore: 100, exTxt: 0, exRes: 0, exRem: 0, avatar: null,   // 試験場の相手の状態
+    natKnown: false, exItem: 0, exHold: true, exFpv: false, exScore: 100, exTxt: 0, exRes: 0, exRem: 0, avatar: null,   // 試験場の相手の状態
     idRaw: '', calD: -1, ep: -1, rxWin: 0, rxN: 0, plDone: -1, plAskAt: 0, plReqAt: 0,                 // idRaw: 受信したままのid (比較用) / calD: 相手の手動2点間距離[cm] / ep: 相手の align.rev
   };
 }
@@ -4669,6 +4982,7 @@ function rxState(ps, m) {
   b[o + 12] = clamp(m[10], 0, 30000);
   ps.w = (ps.w + 1) % SNAP_N; if (ps.n < SNAP_N) ps.n++;
   ps.rpm = b[o + 12]; ps.st = m[11]; ps.mode = m[12]; ps.h = clamp(m[19], -1000, 100000); ps.spd = clamp(m[20], 0, 10000);
+  ps.natKnown = m.length === 28 && wd === 1;                                 // 自然の相手が 位置安定 を載せている (v0.8 以降)。旧版・MR・試験場の状態では偽
   if (m.length === 28) { ps.exItem = m[23] & 7; ps.exHold = !!(m[23] & 8); ps.exFpv = !!(m[23] & 16); ps.exScore = m[24]; ps.exTxt = m[25]; ps.exRes = m[26]; ps.exRem = m[27]; }
   else if (wd === 2) { ps.exItem = 0; ps.exFpv = false; }
   ps.lastState = now; ps.hasState = true;
@@ -4701,6 +5015,7 @@ function netTxState(nowMs, avgRpm) {
   a[13] = r3(_th.x); a[14] = r3(_th.y); a[15] = r3(_th.z); a[16] = r3(angleDiff(hyaw, 0));
   a[17] = align.kind; a[18] = align.id; a[19] = Math.round((pos.y - sim.groundY) * 100); a[20] = Math.round(vel.length() * 10); a[21] = align.rev; a[22] = world.id;
   if (world.ex) { a.length = 28; a[23] = ex.item | (ex.hold ? 8 : 0) | (world.cam === 0 ? 16 : 0); a[24] = ex.score; a[25] = exTxId(); a[26] = ex.res; a[27] = Math.min(999, Math.ceil(exRem())); }   // 試験場: 課題 / 位置安定 / FPV、得点、指示の番号、結果、残り時間
+  else if (world.id === 1) { a.length = 28; a[23] = nat.hold ? 8 : 0; a[24] = 100; a[25] = 0; a[26] = 0; a[27] = 0; }   // 自然: 位置安定 (bit 3) を 28 要素の形で送る。長さ 24〜27 は旧版 (v0.7) が状態ごと捨てるので、旧版も受け付ける 28 要素に載せる (旧版は自然の相手の試験場欄を使わない = 無害)
   else a.length = 23;
   const str = JSON.stringify(a), L = net.list;
   net.txCount++;
@@ -5252,7 +5567,7 @@ function specCamera(dt) {
   if (spec.world === 1 && vrw.built) {                       // VRの観戦カメラは地面の下に潜らない。空は常にカメラに追従
     const g = vrGround(camera.position.x, camera.position.z) + 1.5;
     if (camera.position.y < g) { camera.position.y = g; camera.lookAt(orbit.tx, orbit.ty, orbit.tz); }
-    vrw.sky.position.copy(camera.position); vrw.clouds.rotation.y = performance.now() * 0.000004;
+    vrw.sky.position.copy(camera.position); natFrame(dt, performance.now() * 0.001, true);
   } else if (spec.world === 2 && exw.built) {                 // 試験場の観戦カメラも地面の下に潜らない
     if (camera.position.y < 1.2) { camera.position.y = 1.2; camera.lookAt(orbit.tx, orbit.ty, orbit.tz); }
     exw.sky.position.copy(camera.position); exFrame(dt);
@@ -5286,7 +5601,8 @@ function specRosterUpdate() {
     ps.row.children[5].className = ps.specAl ? 'al' : 'al bad';
     { const exEl = ps.row.children[6], on = ps.world === 2 && live;   // 試験場: 課題・指示・得点・結果
       if (on) { const it = EX_ITEMS[ps.exItem] || EX_ITEMS[0], t = it.name + '　' + (ps.exRes ? EX_RES_NAME[ps.exRes] : ps.mode === MODE_AUTO ? 'お手本飛行' : EX_TXT[ps.exTxt]) + '　' + ps.exScore + '点　位置安定' + (ps.exHold ? 'ON' : 'OFF') + '　残' + exMMSS(ps.exRem); if (exEl.textContent !== t) exEl.textContent = t; }
-      if (exEl.hidden === on) exEl.hidden = !on; }
+      if (!on && ps.world === 1 && live && ps.natKnown) { const t2 = '位置安定' + (ps.exHold ? 'ON' : 'OFF'); if (exEl.textContent !== t2) exEl.textContent = t2; if (exEl.hidden) exEl.hidden = false; }   // 自然: 位置安定だけ
+      else if (exEl.hidden === on) exEl.hidden = !on; }
     ps.row.className = 'row' + (ps.specAl && ps.world === spec.world ? '' : ' dim') + (spec.follow === ps.slot ? ' fol' : '');   // 表示していない世界のパイロットは薄く
   }
   if (sig !== spec.rowsSig) { spec.rowsSig = sig; for (const ps of pilots) spec.list.appendChild(ps.row); }   // スロット順に並べ直す (appendChild は移動)
@@ -5312,6 +5628,8 @@ if (DEBUG) {
     terrainHeight, terrainAt, vrGround, vrGroundMax, vrHomeFor, vrRawHeight, vrDepth, vrDepthRange, frameErr, vrFail, vrFadeStep, netInitShared, sharedDiag, drawHud, hudCv, applyWorld, vrRequestWorld, vrRequestCam, vrUpdateRig, vrTreeCollide, collideVR, vrSurfaceTop, vrBuildWorld, vrSceneLook, vrPickWaypoint, vrHoldUpdate, windStart, windStop, specSetWorld, specToggleWorld, vrFrame, applyDepthMeshMode, vrPlaceAtHome,
     stepSim, collide, updatePlanes, recomputeRoom, readXRInputs, placeHud, updateHeadXR, pickWaypoint, behindWall, surfaceHeightAt, surfaceClearance,
     toggleFlight, toggleMode, toggleHud, toggleMonitor, setMonitor, renderMonitor, updateFpvCamera, syncRoomModel, rebuildRoomModel, roomModelStale, resetWorld, placeDroneInitial, initAudio, stopAudio, frame,
+    // --- 自然の位置安定・風 ---
+    nat, natWindAt, natFrame, natPre, natSetSeed, natReseed, natSetHold, natToggleAtti, natCycleWind, natEnter, natSocks, natClouds, natHudSig, natWindRel, natNote, recallOk, attiNow, windVelStep, landHere, drawHudNatStrip, drawHudNat, windUpdate,
     // --- 試験場 ---
     ex, exw, EX_COURSES, EX_ITEMS, EX_TXT, TX, EXP, EX_PASS, EX_RUN, EX_ATL, exDump, exCellPos, exOrigin, exOwnSlot, exPlan, exRestart, exEnter, exLeave, exStep, exZone, exZoneRaw, exWindAt, exSetWind, exCycleWind, exSpeak, exJudgeFail, vrRigResnap, exArmToggle, exCycleItem, exToggleHold, exToggleDisp, exRestartHold, exDemoToggle, exDemoStop, exSyncCells, exDrawHud, exBoardData, exBoardTick, exFrame, exAtti, exInstr, exRem, exDemoCommands, exBuildWorld, exAvatar, exTxId, exHudSig, exPlaceAtHome, exResetDrone, exLanded, exYBtn, exY, exLTrig, exL, exSetItem, exFinish, exTrigger, exBegin, exDone, EX_RES_NAME, pilotScaleUpdate, worldId, vrPilotSpot, vrRigPilot, exPost, exPre, exFault, exFail, exBestAll, exTopFaults, exRunLine, exSay, exAnnounce, exToast, exApplyDisp, exCapUpdate, exBoardDraw, exBestSave, EX_VOICE, exSolo() { return net.on; },
     get yawCmd() { return yawCmd; }, get xrSession() { return xrSession; }, get placed() { return placed; },
@@ -5392,7 +5710,7 @@ if (DEBUG) {
     go(true);
   } else {
     // デスクトッププレビュー (ルーム名があれば観戦モード)
-    const previewMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / V=ドローン視点 / N=ワールド切替（MR→自然→試験場） / C=視点 / 試験場: T=始動→↑で離陸 Y=科目 U=8の字の最初の円 G=位置安定 Z=区画の塗り P=ポール / ドラッグ=視点';
+    const previewMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / V=ドローン視点 / N=ワールド切替（MR→自然→試験場） / C=視点 / 自然: G=位置安定 ON/OFF Y=風（無風→弱→中） / 試験場: T=始動→↑で離陸 Y=科目 M=お手本 G=本番/補助表示 U=やり直し K=位置安定（フリー練習） / ドラッグ=視点';
     const specMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。ルーム名が入力されているので、PCから観戦できます（自機は飛ばしません）。';
     const refresh = () => { const r = currentRoom(); btn.textContent = r ? '観戦を開始' : 'PCプレビューを開始'; msgEl.textContent = r ? specMsg : previewMsg; };
     roomEl.addEventListener('input', refresh); refresh();
