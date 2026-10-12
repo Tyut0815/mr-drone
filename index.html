@@ -79,9 +79,10 @@
       <li><b>自動モード</b>：ドローンが部屋の中を自由に飛び回ります。</li>
       <li><b>手動モード</b>：モード2 は 左スティック＝上昇下降・旋回、右スティック＝前後・左右。モード1 は 左＝前後・旋回、右＝上昇下降・左右（下で切替）。</li>
       <li><b>A</b>＝自動/手動切替　<b>B</b>＝離陸/着陸　<b>右トリガー長押し</b>＝手元へ呼び戻し　<b>X</b>＝HUD表示切替　<b>左トリガー</b>＝ドローン視点　<b>Y</b>＝位置合わせ（ルーム参加時）</li>
-      <li><b>右スティック長押し（0.5秒）</b>＝ワールド切替（MR → 自然 → 試験場 → MR）　<b>左スティック押込み</b>＝視点切替（VR：操縦者目線 ⇄ 一人称）</li>
+      <li><b>右スティック長押し（0.5秒）</b>＝ワールド切替（MR → MR試験 → 自然 → 試験場 → MR）　<b>左スティック押込み</b>＝視点切替（VR：操縦者目線 ⇄ 一人称）</li>
       <li><b>試験場</b>（無人航空機操縦士 一等・二等 実地試験の練習場）：地面に立ち、試験員の指示（音声と字幕）に従って飛ばします。<b>B</b>＝モーター始動/停止、スロットルで離陸・降下して接地すれば着陸　<b>左Y</b>＝科目　<b>A</b>＝お手本　<b>左トリガー</b>＝本番/補助表示（長押しでやり直し）。フリー練習では <b>左Y長押し</b>＝位置安定 ON/OFF、<b>A</b>＝風の強さ</li>
       <li><b>自然</b>（ワールド切替で入る景色）：<b>左トリガー</b>＝位置安定 ON/OFF（既定ON。OFFだと止まらず風に流され、自動飛行・帰還は使えません）　<b>左Y</b>＝風の強さ（無風→弱→中。下の「風（VR）」と同じ）</li>
+      <li><b>MR試験</b>（MR → <b>MR試験</b> → 自然 → 試験場 → MR の順）：パススルーのまま、部屋の<b>床に同じ6科目のコースを縮尺（原寸・3/4・1/2・1/3）で描いて</b>、立った位置から目視で飛ばします。広さは原寸で幅21m×奥行15m（二等スクエア。1/2 なら 10.5m×7.5m）。配置中：受験者の位置に立ってコースの正面を向き、<b>右トリガー</b>で配置（押した瞬間の立ち位置と向き）。<b>左Y</b>＝縮尺　<b>左スティック左右</b>＝科目　<b>右スティック</b>＝位置の微調整（<b>右グリップ</b>を押しながら左右＝向き）。配置後：<b>左Y</b>＝科目（立ち位置はそのまま）、<b>右トリガー1秒長押し</b>（モーター停止中）＝配置し直し。ほかは試験場と同じです。HUDの高度と速度は本番の寸法に換算した値（実寸は小さく併記）。壁や家具に重なると赤い枠と警告が出ます。コントローラーが必要です。</li>
       <li class="warn">VRでは周囲が見えません。その場から動かずに操作してください</li>
       <li>コントローラーなし（ハンドトラッキング）の場合は自動モードで飛行します。ピンチで離着陸。</li>
     </ul>
@@ -98,10 +99,10 @@
 <script type="module">
 import * as THREE from 'three';
 
-const APP_VERSION = 'v0.8';                                    // 開始画面に表示するビルド識別子
+const APP_VERSION = 'v0.9';                                    // 開始画面に表示するビルド識別子
 const DEBUG = new URLSearchParams(location.search).has('debug');
 const NAT_SWAY_Q = new URLSearchParams(location.search).get('sway') === '1';   // ?sway=1: 自然の樹木の揺れ (頂点シェーダーの差し替え) を有効にする。既定は無効 (C.NAT_TREE_SWAY)
-const START_WORLD = (() => { const w = new URLSearchParams(location.search).get('world'); return w === 'exam' ? 2 : w === 'vr' ? 1 : 0; })();   // ?world=vr: 自然ワールドで開始 / ?world=exam: 試験場で開始 (既定はMR)
+const START_WORLD = (() => { const w = new URLSearchParams(location.search).get('world'); return w === 'mrexam' ? 3 : w === 'exam' ? 2 : w === 'vr' ? 1 : 0; })();   // ?world=vr: 自然ワールドで開始 / ?world=exam: 試験場で開始 / ?world=mrexam: MR試験で開始 (既定はMR)
 
 /* =====================================================================
  * 1. 定数 (チューニングパラメータ)
@@ -188,6 +189,12 @@ const C = Object.freeze({
   EXJ_EMG_CROSS: 1.5, EXJ_EMG_DRIFT: 4,                         // 緊急着陸で最短経路から外れたとみなす横ずれ [m] / 「緊急事態発生」の後、宣言された位置からこの距離 [m] を超えて離れたら「その場でホバリングしない」(5点)
   EXJ_GAP: 1.5, EXJ_TURN_GRACE: 3, EXJ_TURN_R: 1.0, EXJ_HDG_FRAC: 0.8,   // 試験員が停止を確認してから次の指示を出すまで [s] / 各区間の初めの機首を必ず見ない時間 [s] / その後も、出発点から この距離 [m] 以内で向きを変えている間 (一度も向きが合っていない間) は機首を見ない (その場旋回は自由) / 「区間全体」とみなす割合 (機首が EXJ_HDG_BAD 超だった時間 / 見ていた時間)
   EXJ_ZONE_T: 2, EXJ_ZONE_OUT: 0.3, EXJ_HOV_V: 0.5, EXJ_PIR_SEC: 20,   // 減点区画の「概ね2秒」[s] / 区画から出たとみなすまでの連続時間 [s] (境界線上の出入りを1回の進入として数える) / ホバリング5秒に数える水平速度の上限 [m/s] / お手本のピルエット1回転 [s]
+  // --- MR試験 (v0.9, ワールド id 3): 現実の床に縮尺コースを描き、立ったまま目視で飛ばす。コース座標 (EX_COURSES) の寸法は試験場と同じで、床に 縮尺 s 倍で貼る。判定はコース座標 (m) のまま ---
+  MRX_SCALES: Object.freeze([1, 3 / 4, 1 / 2, 1 / 3]), MRX_HOLD_S: 1, MRX_OFF_V: 0.5, MRX_YAW_V: 0.35, MRX_SM_TAU: 0.12, MRX_FIT_HZ: 5,   // 縮尺 (原寸 / 3/4 / 1/2 / 1/3) / 再配置の長押し [s] / 右スティックの微調整 [m/s] / 向きの微調整 [rad/s] / 配置のなめらかさ [s] / 広さ判定の更新頻度 [Hz]
+  MRX_SAFE_M: 3, MRX_SAFE_S_MIN: 0.5, MRX_CEIL_EXTRA: 2, MRX_CEIL_NEED: 0.6, MRX_CONE_S_MIN: 0.6, MRX_PYLON_K_MAX: 1.3,   // 安全枠: 描いた範囲の外側へ 3 m × max(縮尺, 0.5) / 天井が検出できない時の上限 = 最大高度 × 縮尺 + 2 m / 天井に必要な余裕 [m] / コーン・文字標識の縮尺の下限
+  MRX_BOARD_X: 1.2, MRX_FLICK_ON: 0.7, MRX_FLICK_OFF: 0.3, MRX_FIT_STEP: 0.5,   // 補助表示の小さな掲示板: 受験者の右 [m] / 左スティック左右で科目を切り替える しきい値 (入る / 戻る)
+  MRX_FAR_M: 7, MRX_FAR_ANG: 0.022,   // 補助表示: 目から この距離 [m] を超えた機体を囲む輪を出す / 輪の見かけの半径 [rad] (約 1.3°)
+  MRX_Y_ZONE: 0.006, MRX_Y_CASE: 0.008, MRX_CASE_W: 0.04, MRX_Y_PAINT: 0.01, MRX_Y_LABEL: 0.012, MRX_Y_OUT: 0.014, MRX_Y_AID: 0.016,   // 実床からの高さ [m] (5〜15 mm。区画の塗り < 線 < 床の文字 < 外枠 < 目標・影の点)
   EX_AUTOSTOP_S: 1.5, EX_ATTI_DRAG: 0.6, EX_CAP_S: 5, EX_HOLD_S: 1,   // 接地後スロットルを下げたままモーターが自動停止するまで [s] (細則外・操作の仕様) / 位置安定OFFの空気抵抗の係数 (実機は慣性で流れる。惰性: 2 m/s から 2 秒後 1.4 m/s) / 字幕の表示時間 [s] / 長押しの時間 [s]
 });
 
@@ -201,10 +208,10 @@ const rand = (a, b) => a + Math.random() * (b - a);
 
 /** 単純なPID (積分クランプ付き)。de は外部から微分項(誤差の変化率)を渡す。 */
 class PID {
-  constructor(kp, ki, kd, imax) { this.kp = kp; this.ki = ki; this.kd = kd; this.imax = imax; this.i = 0; }
+  constructor(kp, ki, kd, imax) { this.kp = kp; this.ki = ki; this.kd = kd; this.imax = imax; this.i = 0; this.sc = 1; }   // sc: MR試験の縮尺 (積分の上限も縮尺倍。他のワールドは 1 = 従来どおり)
   reset() { this.i = 0; }
   step(e, de, dt) {
-    this.i = clamp(this.i + e * dt, -this.imax, this.imax);
+    this.i = clamp(this.i + e * dt, -this.imax * this.sc, this.imax * this.sc);
     return this.kp * e + this.ki * this.i + this.kd * de;
   }
 }
@@ -465,14 +472,14 @@ let pitchCmd = 0, rollCmd = 0;       // 姿勢指令
 
 // 飛行パラメータ。MR の値は C のまま (従来と同一のビット列)。VR 中は P_VR へ切り替える (C は凍結のまま、間接参照で切替)。
 const P_MR = Object.freeze({ MAN_V: C.MAN_V, MAN_VY: C.MAN_VY, MAN_YAW: C.MAN_YAW, MAX_TILT: C.MAX_TILT, TAKEOFF_ALT: C.TAKEOFF_ALT, DRAG_QUAD: C.DRAG_QUAD,
-  AUTO_VMAX: C.AUTO_VMAX, AUTO_VY_MAX: C.AUTO_VY_MAX, RECALL_VMAX: C.RECALL_VMAX, TAKEOFF_VY: 0.8, LAND_VY: 0.45, DRAG_FF: 0, EX: 0, ATTI_TILT: 0, ATTI_DRAG: 1 });   // ATTI_*: 位置安定OFFの最大傾き / 抵抗係数 (MRには位置安定OFFが無いので使わない)
+  AUTO_VMAX: C.AUTO_VMAX, AUTO_VY_MAX: C.AUTO_VY_MAX, RECALL_VMAX: C.RECALL_VMAX, TAKEOFF_VY: 0.8, LAND_VY: 0.45, DRAG_FF: 0, EX: 0, ATTI_TILT: 0, ATTI_DRAG: 1, SC: 1 });   // ATTI_*: 位置安定OFFの最大傾き / 抵抗係数 (MRには位置安定OFFが無いので使わない)
 const P_VR = Object.freeze({ MAN_V: C.VR_MAN_V, MAN_VY: C.VR_MAN_VY, MAN_YAW: C.VR_MAN_YAW, MAX_TILT: C.VR_MAX_TILT, TAKEOFF_ALT: C.VR_TAKEOFF_ALT, DRAG_QUAD: C.VR_DRAG_QUAD,
-  AUTO_VMAX: C.VR_AUTO_V, AUTO_VY_MAX: C.VR_AUTO_VY, RECALL_VMAX: C.VR_RECALL_V, TAKEOFF_VY: C.VR_TAKEOFF_VY, LAND_VY: C.VR_LAND_VY, DRAG_FF: 1, EX: 0, ATTI_TILT: C.NAT_ATTI_TILT, ATTI_DRAG: C.NAT_ATTI_DRAG });
+  AUTO_VMAX: C.VR_AUTO_V, AUTO_VY_MAX: C.VR_AUTO_VY, RECALL_VMAX: C.VR_RECALL_V, TAKEOFF_VY: C.VR_TAKEOFF_VY, LAND_VY: C.VR_LAND_VY, DRAG_FF: 1, EX: 0, ATTI_TILT: C.NAT_ATTI_TILT, ATTI_DRAG: C.NAT_ATTI_DRAG, SC: 1 });
 // 試験場: 最大速度 4 m/s・上昇 2 m/s・傾き 25°。離陸は自動ではなく、B で始動してスロットルで浮上する (EX=1)。AUTO系の値は使わない (お手本飛行は試験場の専用コマンド)。
 const P_EX = Object.freeze({ MAN_V: C.EX_MAN_V, MAN_VY: C.EX_MAN_VY, MAN_YAW: C.EX_MAN_YAW, MAX_TILT: C.EX_MAX_TILT, TAKEOFF_ALT: 0.5, DRAG_QUAD: C.VR_DRAG_QUAD,
-  AUTO_VMAX: C.EX_DEMO_V, AUTO_VY_MAX: 1.0, RECALL_VMAX: C.EX_DEMO_V, TAKEOFF_VY: C.EX_MAN_VY, LAND_VY: 0.5, DRAG_FF: 1, EX: 1, ATTI_TILT: C.EX_ATTI_TILT, ATTI_DRAG: C.EX_ATTI_DRAG });
+  AUTO_VMAX: C.EX_DEMO_V, AUTO_VY_MAX: 1.0, RECALL_VMAX: C.EX_DEMO_V, TAKEOFF_VY: C.EX_MAN_VY, LAND_VY: 0.5, DRAG_FF: 1, EX: 1, ATTI_TILT: C.EX_ATTI_TILT, ATTI_DRAG: C.EX_ATTI_DRAG, SC: 1 });   // SC: 縮尺 (MR試験の P_MRX だけ 1 以外。1 を掛けても値は変わらない)
 const P = Object.assign({}, P_MR);   // 今使っているパラメータ (ワールド切替で書き換える)
-const world = { id: 0, vr: false, ex: false, cam: 1, home: new THREE.Vector3() };   // id: 0=MR 1=自然 2=試験場 / vr: VRワールド中 (id>0) / ex: 試験場中 / cam: 0=FPV(機体目線) 1=操縦者目線 / home: VRの離着陸点 (自然=パッドの中心 / 試験場=Hの円の中心)
+const world = { id: 0, vr: false, ex: false, mrx: false, cam: 1, home: new THREE.Vector3() };   // id: 0=MR 1=自然 2=試験場 3=MR試験 (vr=true・ex=true・mrx=true。パススルーのまま) / vr: VRワールド中 (id>0) / ex: 試験場中 / cam: 0=FPV(機体目線) 1=操縦者目線 / home: VRの離着陸点 (自然=パッドの中心 / 試験場=Hの円の中心)
 
 // PID群: ホールド(位置→加速度) と 速度モード(速度誤差→加速度)
 const pidPx = new PID(3.0, 0.6, 2.8, 2.0), pidPz = new PID(3.0, 0.6, 2.8, 2.0), pidPy = new PID(8.0, 4.0, 5.0, 0.8);
@@ -494,7 +501,7 @@ const auto = { wp: new THREE.Vector3(), phase: 0 /*0=移動 1=ホバー*/, until
  * ===================================================================== */
 const planes = [];                 // {xr,m,inv,n,horiz,y,minX,maxX,minZ,maxZ,lastChanged,seen,poly,label}
 const planeMap = new Map();
-const room = { min: new THREE.Vector3(-1.5, 0, -1.5), max: new THREE.Vector3(1.5, 2, 1.5), floorY: 0, fromPlanes: false };
+const room = { min: new THREE.Vector3(-1.5, 0, -1.5), max: new THREE.Vector3(1.5, 2, 1.5), floorY: 0, fromPlanes: false, hasCeil: false };   // hasCeil: 天井の平面を検出している (MR試験の安全枠・広さ判定が使う)
 const startCenter = new THREE.Vector3();
 let planeFeature = false, roomTimer = 0, planesRev = 0;   // planesRev: 平面の追加/削除/形状変更のたびに+1 (部屋モデルの再構築判定用)
 
@@ -504,7 +511,7 @@ function makePlane(xp) {
 }
 
 function setFallbackRoom() {
-  room.fromPlanes = false; room.floorY = 0;
+  room.fromPlanes = false; room.floorY = 0; room.hasCeil = false;
   room.min.set(startCenter.x - C.BOX_X / 2, 0, startCenter.z - C.BOX_Z / 2);
   room.max.set(startCenter.x + C.BOX_X / 2, C.BOX_Y, startCenter.z + C.BOX_Z / 2);
 }
@@ -563,7 +570,7 @@ function recomputeRoom() {
     if (pl.horiz) { if (pl.y < 0.5 && pl.y > -0.6 && pl.y < fy) fy = pl.y; if (pl.y > 1.8 && pl.y > cy) cy = pl.y; }
   }
   if (x1 - x0 < 1.5 || z1 - z0 < 1.5) { setFallbackRoom(); return; }   // 情報不足
-  room.fromPlanes = true;
+  room.fromPlanes = true; room.hasCeil = cy > -1e8;
   room.floorY = fy < 1e8 ? fy : 0;
   room.min.set(x0, room.floorY, z0);
   room.max.set(x1, cy > -1e8 ? cy : room.floorY + 2.4, z1);
@@ -719,7 +726,7 @@ const aDes = new THREE.Vector3();
 function control(dt) {
   if (attiNow()) { attiControl(dt); return; }                // 試験場・自然で位置安定OFF (ATTI相当): スティック=傾き。下の速度/位置ホールドは使わない
   // 水平
-  if (vCmd.x * vCmd.x + vCmd.z * vCmd.z > 0.0004) {
+  if (vCmd.x * vCmd.x + vCmd.z * vCmd.z > 0.0004 * P.SC * P.SC) {   // (SC: MR試験の縮尺。他は 1 = 従来と同じ値)
     sim.holdXZ = false; nat.brake = false;
     aDes.x = pidVx.step(vCmd.x - vel.x, 0, dt); aDes.z = pidVz.step(vCmd.z - vel.z, 0, dt);
     if (P.DRAG_FF) {                                          // VR: 空気抵抗の先回り補償 (定常で目標速度に届く。MRは0で従来どおり)。試験場・自然は風を引いた対気速度で補償 (風の推定値 wFf。MRは 0 なのでビット一致。自然の無風も wFf=0 なので v0.7 とビット一致)
@@ -736,7 +743,7 @@ function control(dt) {
     if (world.vr) { const wd = world.ex ? ex : nat, wx = wd.wFf.x, wz = wd.wFf.z, dr = C.DRAG_LIN + P.DRAG_QUAD * Math.hypot(wx, wz); aDes.x -= dr * wx; aDes.z -= dr * wz; }   // 位置安定ON: 風で押される分を先回りで打ち消す (GNSS/ビジョンの風推定に相当)
   }
   // 鉛直
-  if (Math.abs(vCmd.y) > 0.02) {
+  if (Math.abs(vCmd.y) > 0.02 * P.SC) {
     sim.holdY = false; aDes.y = pidVy.step(vCmd.y - vel.y, 0, dt);
   } else {
     if (!sim.holdY) { sim.holdY = true; tgt.y = pos.y + vel.y * 0.35; pidPy.reset(); }
@@ -777,7 +784,7 @@ function integrate(dt) {
   if (sim.yaw > Math.PI) sim.yaw -= Math.PI * 2; else if (sim.yaw < -Math.PI) sim.yaw += Math.PI * 2;
   sim.thrust += (sim.thrustCmd - sim.thrust) * (1 - Math.exp(-dt / C.LAG_THRUST));
   // アイドル揺れ (姿勢)
-  const wa = 0.012;
+  const wa = 0.012 * P.SC;                                 // 縮尺 (MR試験) では傾きの揺れも tan 比で縮める。他は SC=1 で従来どおり
   buildQuat(quat, sim.yaw, sim.pitch + wa * wob(sim.t, 0.3), sim.roll + wa * wob(sim.t, 2.0));
   tmpV.set(0, 1, 0).applyQuaternion(quat);                 // 機体の上方向
   if (world.vr) { const atti = attiNow(); windVelStep(world.ex ? ex : nat, dt, tmpV.x, tmpV.y, tmpV.z, atti ? P.ATTI_DRAG : 1, world.ex || !atti ? 1 : P.ATTI_DRAG); }   // 試験場・自然: 風を含む空気抵抗 (風が0なら下の式と同じ演算)
@@ -794,6 +801,7 @@ function integrate(dt) {
  * 8. 衝突 (球 r=0.2 vs 平面 / 部屋のAABB / 地面)
  * ===================================================================== */
 function collide() {
+  if (world.mrx) { collideMRX(); return; }                  // MR試験: 検出した平面 (壁・天板の裏・天井) と 床と 安全枠
   if (world.ex) { collideEX(); return; }                    // 試験場: 平らな地面・縁の柔らかい壁・高度上限だけ
   if (world.vr) { collideVR(); return; }                    // VR: 地形・水面・樹木・世界の縁だけを見る (MRの平面・部屋の箱は参照しない)
   const R = C.RADIUS, e = C.RESTITUTION;
@@ -858,7 +866,7 @@ function stepSim(dt) {
 }
 function stepSimBody(dt) {
   sim.t += dt;
-  sim.groundY = world.ex ? 0 : world.vr ? vrGroundMax(pos.x, pos.z) : surfaceHeightAt(pos.x, pos.y, pos.z);
+  sim.groundY = world.ex ? (cf.on ? cf.y : 0) : world.vr ? vrGroundMax(pos.x, pos.z) : surfaceHeightAt(pos.x, pos.y, pos.z);   // MR試験の地面 = 配置した時の実床
   const st = sim.state;
   if (st === ST_LANDED || (st === ST_TAKEOFF && sim.spool < 1)) {
     // 地上: スプールアップ/ダウンのみ (試験場は始動中ならスプールアップ)
@@ -978,11 +986,11 @@ function wrapText(x, text, px, py, maxW, lineH, maxLines) {
 const trunc = (str, n) => { const a = Array.from(str); return a.length > n ? a.slice(0, n - 1).join('') + '…' : str; };   // コードポイント単位 (絵文字などのサロゲートペアを割らない)
 
 /** 世界/視点の表示名 (HUD右上のバッジ): MR / VR・操縦者目線 / VR・一人称 / 試験場 (操縦者目線) / 試験場・一人称 */
-function worldLabel() { return world.id === 0 ? 'MR' : world.ex ? (world.cam === 0 ? '試験場・一人称' : '試験場') : (world.cam === 0 ? 'VR・一人称' : 'VR・操縦者目線'); }
+function worldLabel() { return world.mrx ? 'MR試験' : world.id === 0 ? 'MR' : world.ex ? (world.cam === 0 ? '試験場・一人称' : '試験場') : (world.cam === 0 ? 'VR・一人称' : 'VR・操縦者目線'); }
 /** 右スティック長押しの進捗 (HUD最下行) */
 function drawHoldBar(x, y, W) {
   const s = vrHold.step;
-  x.fillStyle = '#ffee66'; fitText(x, ['自然の世界へ移動します　', '試験場へ移動します　', 'MRへ戻ります　'][world.id] + '■'.repeat(s) + '□'.repeat(5 - s), 18, y, W, 19, 12, true);
+  x.fillStyle = '#ffee66'; fitText(x, ['MR試験へ移動します　', '試験場へ移動します　', 'MRへ戻ります　', '自然の世界へ移動します　'][world.id] + '■'.repeat(s) + '□'.repeat(5 - s), 18, y, W, 19, 12, true);
 }
 
 /** 自然のHUD: 位置安定 ON/OFF (OFF は警告色) と 風の強さ・機体の高さでの風速・機首に対する風向きの矢印 (上 = 機首。矢印の向き = 機体が押される向き) を1行で描く。h = 32。 */
@@ -1126,7 +1134,7 @@ function drawHud(alt, spd, noPlane, ctrl) {
     fitText(x, (stickMode === 1 ? 'モード1　左: 上下=前後 左右=旋回　右: 上下=昇降 左右=移動' : 'モード2　左: 上下=昇降 左右=旋回　右: 前後左右=移動'), 18, 94, 476, 19, 11, false);
     fitText(x, 'A=自動/手動  B=離着陸  X=HUD', 18, 118, 476, 19, 12, false);
     fitText(x, world.vr ? '右トリガー長押し=パッドへ帰還' : '右トリガー長押し=呼び戻し　左トリガー=ドローン視点', 18, 142, 476, 19, 12, false);
-    fitText(x, '右スティック長押し=ワールド切替（MR→自然→試験場）', 18, 166, 476, 19, 12, false);
+    fitText(x, '右スティック長押し=ワールド切替（MR→MR試験→自然→試験場）', 18, 166, 476, 19, 12, false);
     fitText(x, world.vr ? '左スティック押込み=視点（操縦者目線 / FPV）' : '左スティック押込み=視点（VR）', 18, 190, 476, 19, 12, false);
   } else {
     x.fillText('コントローラー未検出: 自動モード', 18, 100);
@@ -2165,7 +2173,7 @@ function vrRequestWorld(w) {
   fade.phase = 1; fade.t = 0; fade.black = 0; fade.hold = 0; fade.kind = 1; fade.arg = id; return true;
 }
 function vrRequestCam() {
-  if (!world.vr || fade.phase !== 0 || spec.on) return false;
+  if (!world.vr || world.mrx || fade.phase !== 0 || spec.on) return false;
   fade.phase = 1; fade.t = 0; fade.black = 0; fade.hold = 0; fade.kind = 2; return true;
 }
 /** 暗転 → (真っ暗のフレームを1枚描いてから) 切替 → (真っ暗のまま数フレーム) → 明転。
@@ -2193,11 +2201,13 @@ function vrFail(e) {
   vrw.errN++;
   fade.phase = 0; fade.a = 0; fade.hold = 0; fadeMat.opacity = 0; fadeQuad.visible = false;
   try { if (world.vr) applyWorld(0); } catch (e2) { /* 下の最小限の復帰へ */ }
-  if (world.vr) { world.id = 0; world.vr = false; world.ex = false; Object.assign(P, P_MR); }
+  try { if (cf.on) mrxLeave(); mrxPidScale(1); } catch (e4) { /* ignore */ }
+  if (world.vr) { world.id = 0; world.vr = false; world.ex = false; world.mrx = false; Object.assign(P, P_MR); }
   try { vrSceneLook(false); } catch (e3) { /* 下で最低限だけ戻す */ }
   try {                                                        // 見た目の最小限の復帰 (applyWorld(false) が途中で失敗していても)
     if (vrw.group) vrw.group.visible = false;
     if (exw.group) exw.group.visible = false;
+    mrxShow(false);
     scene.fog = null; applyDepthMeshMode(false);
     rig.position.set(0, 0, 0); rig.quaternion.identity(); rig.scale.set(1, 1, 1);
     vigMat.opacity = 0; vigQuad.visible = false; rigS.vig = 0; drone.visible = true;
@@ -2206,7 +2216,7 @@ function vrFail(e) {
 function vrUpdateOverlays(dt) {
   const t = Math.tan(camera.fov * Math.PI / 360), asp = renderer.xr.isPresenting ? 1 : camera.aspect;
   fadeMat.opacity = fade.a; fadeQuad.visible = fade.a > 0.001;
-  if (world.vr && world.cam === 0 && C.VR_VIGNETTE) {      // ビネットはFPVだけ (操縦者目線は視点が動かない)
+  if (world.vr && !world.mrx && world.cam === 0 && C.VR_VIGNETTE) {      // ビネットはFPVだけ (操縦者目線は視点が動かない)
     const vs = Math.max(0, rigS.speed - 0.6) / (C.VR_VIG_SPEED - 0.6), vy = Math.max(0, Math.abs(rigS.yawRate) - 0.12) / (C.VR_VIG_YAW - 0.12);
     const target = C.VR_VIGNETTE_MAX * clamp(Math.max(vs, vy), 0, 1);
     rigS.vig += (target - rigS.vig) * (1 - Math.exp(-dt / (target > rigS.vig ? 0.15 : 0.4)));
@@ -2302,9 +2312,10 @@ function vrDepthRestore() {
 /** 見た目だけをワールド (0=MR 1=自然 2=試験場。true/false も可) にする: 世界の表示・霧・照明・カメラの範囲・深度メッシュ。パイロットでも観戦(PC)でも使う。 */
 function vrSceneLook(w) {
   const id = worldId(w);
-  if (id !== 0) {
+  if (id === 1 || id === 2) {
     if (id === 1) vrBuildWorld(); else exBuildWorld();
     if (vrw.group) vrw.group.visible = id === 1; if (exw.group) exw.group.visible = id === 2;
+    mrxShow(false);
     scene.fog = id === 1 ? vrw.fog : exw.fog;
     hemi.intensity = C.VR_HEMI_I; hemi.color.setHex(0xcfe4ff); hemi.groundColor.setHex(0x6d7a4d);
     sun.intensity = C.VR_SUN_I; sun.color.setHex(0xfff0d6); sun.position.copy(VR_SUN).multiplyScalar(100);
@@ -2320,11 +2331,12 @@ function vrSceneLook(w) {
   } else {
     if (vrw.group) vrw.group.visible = false;
     if (exw.group) exw.group.visible = false;
+    mrxShow(id === 3);                                         // MR試験: パススルーのまま (霧・VRの照明・カメラ範囲の変更なし) で、床に描いたコースだけ足す
     scene.fog = null;
     hemi.intensity = mrLight.hi; hemi.color.copy(mrLight.hc); hemi.groundColor.copy(mrLight.hg);
     sun.intensity = mrLight.si; sun.color.copy(mrLight.sc); sun.position.copy(mrLight.sp);
     camera.near = mrCam.near; camera.far = mrCam.far; camera.updateProjectionMatrix();
-    applyDepthMeshMode(false);
+    applyDepthMeshMode(id === 3);                              // MR試験: 深度メッシュは描かない (実物の手前に出る。VRのような near/far の上書き・クリアの変更はしない)
     try { vrDepthRestore(); } catch (e) { /* ignore */ }
   }
 }
@@ -2346,20 +2358,27 @@ function landHere() {                                          // 持ち越さ�
 function applyWorld(w) {
   const id = worldId(w), from = world.id;
   if (id === from) return;
+  const mrLike = (n) => n === 0 || n === 3;                    // パススルーのまま (リグ恒等・実座標) のワールド
   if (id !== 0) {
-    if (id === 1) vrBuildWorld(); else exBuildWorld();
+    if (id === 3) mrxBuild(); else if (id === 1) vrBuildWorld(); else exBuildWorld();
     if (from === 0) { mrSave.ok = placed; mrSave.x = pos.x; mrSave.y = sim.groundY; mrSave.z = pos.z; mrSave.yaw = sim.yaw; mrSave.monOn = mon.on; setMonitor(false); calCancel(); }
-    if (from === 2) exLeave();
-    world.id = id; world.vr = true; world.ex = id === 2; Object.assign(P, id === 2 ? P_EX : P_VR);
+    if (from === 2 || from === 3) exLeave();
+    if (from === 3) mrxLeave();
+    world.id = id; world.vr = true; world.ex = id >= 2; world.mrx = id === 3; Object.assign(P, id === 3 ? P_MRX[mrx.si] : id === 2 ? P_EX : P_VR);
+    if (id !== 3) mrxPidScale(1);
     vrSceneLook(id);
-    if (id === 2) exEnter();                                   // 試験場の状態 (課題・始動・風・判定) を初期化
+    if (id === 3) { mrxEnter(); exEnter(); mrxAfterEnter(); }  // MR試験: 配置待ち (PLACING) から。試験場の状態 (課題・始動・風・判定) も初期化
+    else if (id === 2) exEnter();                              // 試験場の状態 (課題・始動・風・判定) を初期化
     else natEnter();                                           // 自然: 位置安定は必ず ON・風は 0 から
     vrPlaceAtHome(); landHere();
     rigS.init = false; rigS.keep = false; rigS.vig = 0;
-    if (from === 0) windStart();
+    if (id === 3) { rig.position.set(0, 0, 0); rig.quaternion.identity(); rig.scale.set(1, 1, 1); rig.updateMatrixWorld(true); camera.position.set(0, 0, 0); camera.quaternion.identity(); }   // MR試験もリグは厳密に恒等
+    if (mrLike(from) && id !== 3) windStart();
+    else if (id === 3 && !mrLike(from)) windStop();
   } else {
-    if (from === 2) exLeave();
-    world.id = 0; world.vr = false; world.ex = false; Object.assign(P, P_MR);
+    if (from === 2 || from === 3) exLeave();
+    if (from === 3) mrxLeave();
+    world.id = 0; world.vr = false; world.ex = false; world.mrx = false; Object.assign(P, P_MR); mrxPidScale(1);
     windStop();
     vrSceneLook(0);
     rig.position.set(0, 0, 0); rig.quaternion.identity(); rig.scale.set(1, 1, 1); rig.updateMatrixWorld(true);   // MRではrigは厳密に恒等
@@ -2369,7 +2388,7 @@ function applyWorld(w) {
     if (mrSave.monOn) setMonitor(true);
     rigS.vig = 0; vigQuad.visible = false;
   }
-  align.jump = true;                                           // 座標系が変わった: 相手の補間バッファを捨てさせる
+  if (mrLike(from) !== mrLike(id)) align.jump = true;          // 座標系が変わった (MR系 ⇄ VR): 相手の補間バッファを捨てさせる。MR ⇄ MR試験は同じ実座標なので変えない
   hud.hudInit = false; hud.acc = 1;
   vrHold.fired = true;
   if (renderer.xr.isPresenting && !hud.leftGrip) placeHud();   // 浮遊HUD (ハンドトラッキング): 親を rig ⇄ scene で付け替える (?world=vr で手だけの時など)
@@ -2378,7 +2397,8 @@ function applyWorld(w) {
 function vrReset() {
   fade.phase = 0; fade.a = 0; fade.black = 0; fade.hold = 0; fadeMat.opacity = 0; fadeQuad.visible = false; vrHold.t0 = 0; vrHold.fired = false; vrHold.step = 0;
   world.cam = 1; rigS.init = false; rigS.keep = false; rigS.vig = 0;   // 既定は操縦者目線 (地面に立って機体を見る。酔いにくい)
-  if (world.vr) { if (world.ex) exLeave(); world.id = 0; world.vr = false; world.ex = false; Object.assign(P, P_MR); windStop(); }
+  if (world.vr) { if (world.ex) exLeave(); if (world.mrx) mrxLeave(); world.id = 0; world.vr = false; world.ex = false; world.mrx = false; Object.assign(P, P_MR); windStop(); }
+  mrxPidScale(1); mrx.anchorFail = false; mrx.anchorFailN = 0;   // アンカーの失敗の記憶はセッションごと
   vrSceneLook(0);
   rig.position.set(0, 0, 0); rig.quaternion.identity(); rig.scale.set(1, 1, 1); rig.updateMatrixWorld(true);
   camera.position.set(0, 0, 0); camera.quaternion.identity();
@@ -2395,14 +2415,15 @@ function vrHoldUpdate(pressed) {
   if (vrHold.fired) { vrHold.step = 0; return; }
   const f = (now - vrHold.t0) / (C.VR_HOLD_S * 1000);
   vrHold.step = Math.min(5, 1 + Math.floor(f * 5));
-  if (f >= 1) { vrHold.fired = true; vrHold.step = 0; vrRequestWorld((world.id + 1) % 3); }   // MR → 自然 → 試験場 → MR
+  if (f >= 1) { vrHold.fired = true; vrHold.step = 0; vrRequestWorld(WORLD_NEXT[world.id]); }   // MR → MR試験 → 自然 → 試験場 → MR
 }
 
 /** メインループから (毎フレーム): フェード → リグ → 空の追従 → ビネット → 風。例外はここで止める。 */
 function vrFrame(dt, now) {
   try {
     vrFadeStep(dt);
-    if (world.vr) {
+    if (world.mrx) mrxFrame(dt, now);                            // MR試験: リグは動かさない・空も地面もなし。床のコースと補助表示だけ
+    else if (world.vr) {
       vrUpdateRig(dt);
       if (world.ex) exw.sky.position.copy(eyeW); else { vrw.sky.position.copy(eyeW); natFrame(dt, now, false); }
       windUpdate(now, vel.length());
@@ -2666,6 +2687,8 @@ function exZone(sub, phase, x, z) {
 }
 
 /* ---- 作業用: 頂点の書き出し ---- */
+let exLwAdd = 0;                                              // 線の幅への上乗せ [コース m]。MR試験が線の暗い縁取りを作る間だけ 0 でない
+let exLwMin = 0;                                              // 線の幅の下限 [コース m]。MR試験が縮尺コースを作る間だけ 0.03 / 縮尺 (実寸 3 cm 以上)。それ以外は 0 = 指定の幅そのまま
 function exBuf(withUv, alpha) { return { p: [], k: [], u: withUv ? [] : null, a: !!alpha }; }
 function exTri(B, ax, ay, az, bx, by, bz, cx, cy, cz, col, uvs) {
   // 上向き (法線 +Y) になる向きで追加する (y は同じ高さの水平面)
@@ -2680,11 +2703,12 @@ const exCol = (hex, a) => { const c = new THREE.Color(hex); return [c.r, c.g, c.
 function exRect(B, x0, z0, x1, z1, y, col) { exTri(B, x0, y, z0, x0, y, z1, x1, y, z1, col); exTri(B, x0, y, z0, x1, y, z1, x1, y, z0, col); }
 /** 太さ w の線分 (端は w/2 だけ延ばす)。 */
 function exSeg(B, ax, az, bx, bz, w, y, col) {
+  w = Math.max(w, exLwMin) + exLwAdd;
   const dx = bx - ax, dz = bz - az, l = Math.hypot(dx, dz) || 1, ux = dx / l * w / 2, uz = dz / l * w / 2, nx = -uz, nz = ux;
   const x0 = ax - ux, z0 = az - uz, x1 = bx + ux, z1 = bz + uz;
   exTri(B, x0 + nx, y, z0 + nz, x0 - nx, y, z0 - nz, x1 - nx, y, z1 - nz, col); exTri(B, x0 + nx, y, z0 + nz, x1 - nx, y, z1 - nz, x1 + nx, y, z1 + nz, col);
 }
-function exRectLine(B, r, w, y, col) { const h = w / 2; exRect(B, r[0] - h, r[1] - h, r[2] + h, r[1] + h, y, col); exRect(B, r[0] - h, r[3] - h, r[2] + h, r[3] + h, y, col); exRect(B, r[0] - h, r[1] + h, r[0] + h, r[3] - h, y, col); exRect(B, r[2] - h, r[1] + h, r[2] + h, r[3] - h, y, col); }
+function exRectLine(B, r, w, y, col) { const h = (Math.max(w, exLwMin) + exLwAdd) / 2; exRect(B, r[0] - h, r[1] - h, r[2] + h, r[1] + h, y, col); exRect(B, r[0] - h, r[3] - h, r[2] + h, r[3] + h, y, col); exRect(B, r[0] - h, r[1] + h, r[0] + h, r[3] - h, y, col); exRect(B, r[2] - h, r[1] + h, r[2] + h, r[3] - h, y, col); }
 function exRingFill(B, cx, cz, r0, r1, y, col, seg) {
   seg = seg || 64;
   for (let i = 0; i < seg; i++) {
@@ -2888,8 +2912,10 @@ const EX_STAND_PSI = (D) => Math.atan2(-EX_STAND_X, -EX_STAND_DZ);   // 掲示�
 function exCellBuild(X, slot, item) {
   const it = EX_ITEMS[item], L = EX_COURSES[it.course], rec = { slot, item, course: L.key, D: L.D, prims: [], obs: [] };
   exOrigin(slot, _exO);
-  const ox = _exO.x, oz = _exO.z, PB = X.paint, ZP = X.penZ, ZF = X.failZ;
+  const ox = X.mrx ? 0 : _exO.x, oz = X.mrx ? 0 : _exO.z, PB = X.paint, ZP = X.penZ, ZF = X.failZ;   // MR試験 (X.mrx): コース座標のまま (原点 = 0)。実床への貼り付けは群の変換が行う
+  const PY = X.mrx ? X.py : EX_PAINT_Y, ZY = X.mrx ? X.zy : EX_ZONE_Y, kk = X.mrx ? X.k : 1;   // 線・区画の高さ / コーン・文字標識の縮尺の補正 (VR試験場は従来の値・1)
   const R = (id, k, o) => { o.id = id; o.k = k; rec.prims.push(o); return o; };
+  const hw = (h) => Math.max(h, exLwMin / 2) + exLwAdd / 2;                   // 円の線の半幅 (MR試験の縮尺コースだけ下限あり。試験場は exLwMin = 0 で指定のまま)
   const rectV = (r) => [[r[0], r[1]], [r[2], r[1]], [r[2], r[3]], [r[0], r[3]]];
   const circV = (cx, cz, r) => { const v = []; for (let i = 0; i < 96; i++) { const a = i / 96 * 6.283185307179586; v.push([cx + Math.cos(a) * r, cz + Math.sin(a) * r]); } return v; };
   const wr = (r) => [ox + r[0], oz + r[1], ox + r[2], oz + r[3]];
@@ -2900,56 +2926,57 @@ function exCellBuild(X, slot, item) {
     const uv = EX_ATL.uv[name];
     if (uv) {                                                   // 文字標識 (線上の地点は小さくする)
       const sx = inLine ? x - 1.15 : x, sw = inLine ? 0.6 : 0.8;
-      X.stakes.push(ox + sx, oz + z); X.signs.push(ox + sx, 0.46, oz + z + 0.06, sw, sw, uv); R(name + 'Sign', 'point', { p: [sx, z], w: sw });
+      X.stakes.push(ox + sx, oz + z); X.signs.push(ox + sx, 0.46 * kk, oz + z + 0.06 * kk, sw * kk, sw * kk, uv); R(name + 'Sign', 'point', { p: [sx, z], w: sw });
     }
   };
   // --- 区画 (塗り) と境界線 ---
   if (L.ok) {
-    exBand(ZP, wr(L.pen), wr(L.ok), EX_ZONE_Y, AMB); exBand(ZF, wr(L.fail), wr(L.pen), EX_ZONE_Y, RD);
+    exBand(ZP, wr(L.pen), wr(L.ok), ZY, AMB); exBand(ZF, wr(L.fail), wr(L.pen), ZY, RD);
     R('ok', 'rect', { rect: L.ok.slice(), verts: rectV(L.ok) }); R('pen', 'rect', { rect: L.pen.slice(), verts: rectV(L.pen) }); R('fail', 'rect', { rect: L.fail.slice(), verts: rectV(L.fail) });
     R('penBand', 'zone', { outer: L.pen.slice(), inner: L.ok.slice(), verts: rectV(L.pen).concat(rectV(L.ok)) }); R('failBand', 'zone', { outer: L.fail.slice(), inner: L.pen.slice(), verts: rectV(L.fail).concat(rectV(L.pen)) });
-    exRectLine(PB, wr(L.ok), 0.08, EX_PAINT_Y, EX_AMBER); exRectLine(PB, wr(L.pen), 0.08, EX_PAINT_Y, EX_RED); exRectLine(PB, wr(L.fail), 0.08, EX_PAINT_Y, EX_DRED);
+    exRectLine(PB, wr(L.ok), 0.08, PY, EX_AMBER); exRectLine(PB, wr(L.pen), 0.08, PY, EX_RED); exRectLine(PB, wr(L.fail), 0.08, PY, EX_DRED);
   }
   if (L.island) {                                               // コースS: 内側の 10x2 m の減点区画 (Hを含む。H↔Aの移動では無効)
-    exRect(ZP, ox + L.island[0], oz + L.island[1], ox + L.island[2], oz + L.island[3], EX_ZONE_Y, AMB);
+    exRect(ZP, ox + L.island[0], oz + L.island[1], ox + L.island[2], oz + L.island[3], ZY, AMB);
     R('island', 'zone', { rect: L.island.slice(), verts: rectV(L.island) });
-    exRectLine(PB, wr(L.island), 0.06, EX_PAINT_Y, EX_AMBER);
+    exRectLine(PB, wr(L.island), 0.06, PY, EX_AMBER);
   }
   if (L.circles) {                                              // コースF: 2つの円 + 各円の中心の減点円 + 中心のパイロン
     for (let i = 0; i < 2; i++) {
       const c = L.circles[i];
-      exRingFill(PB, ox + c[0], oz + c[1], c[2] - 0.03, c[2] + 0.03, EX_PAINT_Y, EX_ROUTE, 96);
+      exRingFill(PB, ox + c[0], oz + c[1], c[2] - hw(0.03), c[2] + hw(0.03), PY, EX_ROUTE, 96);
       R('circle' + i, 'circle', { c: [c[0], c[1]], r: c[2], verts: circV(c[0], c[1], c[2]) });
-      exRingFill(ZP, ox + c[0], oz + c[1], 0, L.discR, EX_ZONE_Y, AMB, 48);
-      exRingFill(PB, ox + c[0], oz + c[1], L.discR - 0.03, L.discR + 0.03, EX_PAINT_Y, EX_AMBER, 48);
+      exRingFill(ZP, ox + c[0], oz + c[1], 0, L.discR, ZY, AMB, 48);
+      exRingFill(PB, ox + c[0], oz + c[1], L.discR - hw(0.03), L.discR + hw(0.03), PY, EX_AMBER, 48);
       R('disc' + i, 'disc', { c: [c[0], c[1]], r: L.discR, verts: circV(c[0], c[1], L.discR) });
       X.pylons.push(ox + c[0], oz + c[1]); X.poles.push(ox + c[0], oz + c[1]); rec.obs.push([c[0], c[1], EX_PYLON_H, 0.35]);
       R('center' + i, 'pylon', { p: [c[0], c[1]] });
     }
   }
   if (L.penR) {                                                 // コースP: Hを中心とする円 (減点 1.5〜2.5 m / 不合格 2.5 m 超) と 8x8 m の描画範囲
-    exRingFill(ZP, ox, oz, L.penR, L.failR, EX_ZONE_Y, AMB, 96); exRectHole(ZF, wr(L.fail), ox, oz, L.failR, EX_ZONE_Y, RD);
-    exRingFill(PB, ox, oz, L.penR - 0.04, L.penR + 0.04, EX_PAINT_Y, EX_AMBER, 96); exRingFill(PB, ox, oz, L.failR - 0.04, L.failR + 0.04, EX_PAINT_Y, EX_RED, 96); exRectLine(PB, wr(L.fail), 0.08, EX_PAINT_Y, EX_DRED);
+    exRingFill(ZP, ox, oz, L.penR, L.failR, ZY, AMB, 96); exRectHole(ZF, wr(L.fail), ox, oz, L.failR, ZY, RD);
+    exRingFill(PB, ox, oz, L.penR - hw(0.04), L.penR + hw(0.04), PY, EX_AMBER, 96); exRingFill(PB, ox, oz, L.failR - hw(0.04), L.failR + hw(0.04), PY, EX_RED, 96); exRectLine(PB, wr(L.fail), 0.08, PY, EX_DRED);
     R('penCircle', 'circle', { c: [0, 0], r: L.penR, verts: circV(0, 0, L.penR) }); R('failCircle', 'circle', { c: [0, 0], r: L.failR, verts: circV(0, 0, L.failR) }); R('fail', 'rect', { rect: L.fail.slice(), verts: rectV(L.fail) });
     X.poles.push(ox + 1.25, oz);
   }
   // --- 経路 (細い白線) と目印 ---
   if (L.route) {
     const pts = L.route.map((n) => (n === 'H' ? [0, 0] : L.pts[n]));
-    for (let i = 0; i + 1 < pts.length; i++) exSeg(PB, ox + pts[i][0], oz + pts[i][1], ox + pts[i + 1][0], oz + pts[i + 1][1], 0.05, EX_PAINT_Y, EX_ROUTE);
+    for (let i = 0; i + 1 < pts.length; i++) exSeg(PB, ox + pts[i][0], oz + pts[i][1], ox + pts[i + 1][0], oz + pts[i + 1][1], 0.05, PY, EX_ROUTE);
     R('route', 'poly', { names: L.route.slice(), verts: pts.map((p) => p.slice()) });
     const seen = {}; for (const n of L.route) if (n !== 'H' && !seen[n]) { seen[n] = 1; marker(n, L.pts[n][0], L.pts[n][1]); }
   }
   // --- Hの円 (直径 2 m) と H ---
-  exRingFill(PB, ox, oz, EX_H_RADIUS - 0.045, EX_H_RADIUS + 0.045, EX_PAINT_Y, EX_WHITE, 64);
-  for (const [bx0, bz0, bx1, bz1] of [[-0.42, -0.4, -0.3, 0.4], [0.3, -0.4, 0.42, 0.4], [-0.3, -0.06, 0.3, 0.06]]) exRect(PB, ox + bx0, oz + bz0, ox + bx1, oz + bz1, EX_PAINT_Y, EX_WHITE);
+  exRingFill(PB, ox, oz, EX_H_RADIUS - hw(0.045), EX_H_RADIUS + hw(0.045), PY, EX_WHITE, 64);
+  for (const [bx0, bz0, bx1, bz1] of [[-0.42, -0.4, -0.3, 0.4], [0.3, -0.4, 0.42, 0.4], [-0.3, -0.06, 0.3, 0.06]]) exRect(PB, ox + bx0, oz + bz0, ox + bx1, oz + bz1, PY, EX_WHITE);
   R('H', 'circle', { c: [0, 0], r: EX_H_RADIUS, verts: circV(0, 0, EX_H_RADIUS) });
   // --- 受験者・試験員の立ち位置 (床の標示) ---
   const D = L.D, ex0 = EX_EXAMINER[0];
-  exRectLine(PB, [ox - 0.4, oz + D - 0.4, ox + 0.4, oz + D + 0.4], 0.05, EX_PAINT_Y, EX_WHITE); exRectLine(PB, [ox + ex0 - 0.4, oz + D - 0.4, ox + ex0 + 0.4, oz + D + 0.4], 0.05, EX_PAINT_Y, EX_WHITE);
-  R('pilot', 'point', { p: [0, D] }); R('examiner', 'point', { p: [ex0, D] });
-  X.flat.push(ox, oz + D + 0.95, 0.9, 0.45, EX_ATL.uv['受験者']); X.flat.push(ox + ex0, oz + D + 0.95, 0.9, 0.45, EX_ATL.uv['試験員']);
-  X.figs.push(ox + ex0, 0, oz + D - 0.05, 0, 0.78, 0.98, 0.22);                       // 試験員 (ライムのベスト): 受験者の左
+  exRectLine(PB, [ox - 0.4, oz + D - 0.4, ox + 0.4, oz + D + 0.4], 0.05, PY, EX_WHITE); if (!X.mrx) exRectLine(PB, [ox + ex0 - 0.4, oz + D - 0.4, ox + ex0 + 0.4, oz + D + 0.4], 0.05, PY, EX_WHITE);
+  R('pilot', 'point', { p: [0, D] }); if (!X.mrx) R('examiner', 'point', { p: [ex0, D] });
+  X.flat.push(ox, oz + D + 0.95, 0.9, 0.45, EX_ATL.uv['受験者']); if (!X.mrx) X.flat.push(ox + ex0, oz + D + 0.95, 0.9, 0.45, EX_ATL.uv['試験員']);
+  if (!X.mrx) X.figs.push(ox + ex0, 0, oz + D - 0.05, 0, 0.78, 0.98, 0.22);                       // 試験員 (ライムのベスト): 受験者の左
+  if (!X.mrx) {                                                 // MR試験には人形・掲示板・吹き流しは置かない (小さな掲示板は別に出す)
   const ax = EX_ASSIST[0], az = EX_ASSIST[1];
   X.figs.push(ox + ax, 0, oz + az, Math.atan2(-(0 - ax), -(0 - az)), 1.0, 0.55, 0.18);   // 補助員 (オレンジのベスト): 区域の外の +X 側。Hの方を向く
   R('assistant', 'point', { p: [ax, az] });
@@ -2958,6 +2985,7 @@ function exCellBuild(X, slot, item) {
   R('board', 'point', { p: [EX_STAND_X, D + EX_STAND_DZ], y: EX_BOARD_Y1, w: EX_BOARD_W, h: EX_BOARD_H1 }); R('result', 'point', { p: [EX_STAND_X, D + EX_STAND_DZ], y: EX_BOARD_Y2, w: EX_BOARD_W, h: EX_BOARD_H2 });
   // --- 吹き流し ---
   X.socks.push(ox + 12.0, oz + 2.5); R('windsock', 'point', { p: [12.0, 2.5] });
+  }
   rec.org = [ox, oz]; return rec;
 }
 
@@ -3144,12 +3172,15 @@ function exWindInit() {
 }
 function exWindAt(t, out) {
   const p = ex.wp, g = 0.6 * Math.sin(0.9 * t + p[0]) + 0.4 * Math.sin(1.9 * t + p[1]);                    // -1..1
-  const W = C.EX_WIND[ex.wind] || C.EX_WIND[0], sp = Math.max(0, W[0] + W[1] * g);                            // 平均 ± 突風
+  const W = C.EX_WIND[ex.wind] || C.EX_WIND[0], sp = Math.max(0, (W[0] + W[1] * g) * P.SC);   // MR試験: 風も縮尺倍 (SC=1 なら同じ値)                            // 平均 ± 突風
   const ph = p[2] + 0.6 * Math.sin(0.07 * t + p[3]) + 0.25 * Math.sin(0.31 * t + p[1]);                  // 向き (ゆっくり揺らぐ)
-  out.set(sp * Math.cos(ph), 0, sp * Math.sin(ph)); return sp;
+  if (cf.on) { const wx = sp * Math.cos(ph), wz = sp * Math.sin(ph); out.set(wx * cf.c + wz * cf.sn, 0, -wx * cf.sn + wz * cf.c); }   // MR試験: 風向きはコースに対して決める (床に貼った向きによらず同じ試験になる。アンカーの補正でコースが回れば風も一緒に回る)
+  else out.set(sp * Math.cos(ph), 0, sp * Math.sin(ph));
+  return sp;
 }
 /** 物理ステップの前: 風を進める。お手本飛行中にスティックを触ったら手動へ戻す。 */
 function exPre(dt) {
+  exMap();
   ex.wt += dt; ex.wspd = exWindAt(ex.wt, ex.w);
   if (sim.mode === MODE_AUTO && ex.demo && (Math.abs(input.lx) > 0.3 || Math.abs(input.ly) > 0.3 || Math.abs(input.rx) > 0.3 || Math.abs(input.ry) > 0.3)) exDemoStop();
 }
@@ -3178,10 +3209,11 @@ const attiNow = () => (world.ex ? exAtti() : world.vr && !nat.hold && sim.state 
  *  自然の自動離陸・着陸中 (sim.state が飛行中以外) はスティックの傾きを無視して水平を保つ (上下だけ自動。水平は風まかせ)。 */
 function attiControl(dt) {
   sim.holdXZ = false;
-  if (Math.abs(vCmd.y) > 0.02) { sim.holdY = false; aDes.y = pidVy.step(vCmd.y - vel.y, 0, dt); }
+  if (Math.abs(vCmd.y) > 0.02 * P.SC) { sim.holdY = false; aDes.y = pidVy.step(vCmd.y - vel.y, 0, dt); }
   else { if (!sim.holdY) { sim.holdY = true; tgt.y = pos.y + vel.y * 0.35; pidPy.reset(); } aDes.y = pidPy.step(tgt.y - pos.y, -vel.y, dt); }
   const fly = sim.state === ST_FLYING;
-  pitchCmd = fly ? input.ry * P.ATTI_TILT : 0; rollCmd = fly ? input.rx * P.ATTI_TILT : 0;       // 前 = 機首下げ(+) / 右 = 右傾き(+): 機体の向きに対する操作
+  if (P.SC === 1) { pitchCmd = fly ? input.ry * P.ATTI_TILT : 0; rollCmd = fly ? input.rx * P.ATTI_TILT : 0; }   // 前 = 機首下げ(+) / 右 = 右傾き(+): 機体の向きに対する操作
+  else { pitchCmd = fly ? Math.atan(P.SC * Math.tan(input.ry * C.EX_ATTI_TILT)) : 0; rollCmd = fly ? Math.atan(P.SC * Math.tan(input.rx * C.EX_ATTI_TILT)) : 0; }   // MR試験: 縮尺しても 加速度/g = tan(傾き) が スティックの途中でも s 倍になるように (全開は P.ATTI_TILT と同じ)
   const ty = Math.max(C.G + aDes.y, 0.3 * C.G), cs = Math.cos(pitchCmd) * Math.cos(rollCmd);
   sim.thrustCmd = clamp(ty / cs, 0, 2.0 * C.G);
 }
@@ -3205,6 +3237,7 @@ function collideEX() {
 /** B: 着陸中なら 始動 ⇄ 停止 (飛行中は何もしない: 降下して接地すれば着陸)。終了した試行の後に始動すると新しい試行 (乱数種が変わる)。停止で着陸の手順が終われば試験の結果を出す。 */
 function exArmToggle() {
   if (sim.state !== ST_LANDED) return;
+  if (world.mrx && mrx.placing) { exNotice('先にコースを配置してください（右トリガー）'); return; }
   if (sim.mode === MODE_AUTO) { exNotice('お手本飛行中です（Aで手動に戻ります）'); return; }
   if (ex.armed) { ex.armed = false; ex.touchT = -1; exAfterStop(); return; }
   if (ex.res !== 0) exRestart();
@@ -3217,14 +3250,15 @@ function exGroundStep(dt) {
   if (!ex.armed || sim.spool < 0.95) return;
   const want = sim.mode === MODE_AUTO ? !!(ex.step && ex.step.k !== 'idle' && ex.res === 0 && ex.touchT < 0) : input.ly > 0.12;   // お手本は接地したら再び浮上しない
   if (!want) return;
-  sim.state = ST_FLYING; pos.y = 0.01; vel.set(0, 0.3, 0); sim.holdY = false; sim.holdXZ = false; sim.thrust = C.G * 1.02; sim.thrustCmd = sim.thrust;
+  sim.state = ST_FLYING; pos.y = sim.groundY + 0.01 * P.SC; vel.set(0, 0.3 * P.SC, 0); sim.holdY = false; sim.holdXZ = false; sim.thrust = P.SC === 1 ? C.G * 1.02 : C.G * (1 + 0.02 * P.SC); sim.thrustCmd = sim.thrust;
   ex.touchT = -1; ex.offT = 0; ex.landOK = false; ex.wEst.set(0, 0, 0); ex.wDot.set(0, 0, 0); ex.wFf.set(0, 0, 0); exDvx = exDvz = exDyc = 0;     // 風の推定は浮上してから (地上では分からない) / お手本の指令も 0 から
   ex.pvx = vel.x; ex.pvz = vel.z; ex.pyr = 0; ex.axs = ex.azs = ex.yas = 0;
 }
 /** 物理ステップの後: 接地の判定・自動停止・判定。 */
 function exPost(dt) {
-  if (sim.state === ST_FLYING && pos.y <= 0 && ex.preVy < 0) {
-    const vs = -ex.preVy, hs = Math.hypot(vel.x, vel.z), up = tmpV.set(0, 1, 0).applyQuaternion(quat).y, tilt = Math.acos(clamp(up, -1, 1)) * 57.29578;
+  exMap();
+  if (sim.state === ST_FLYING && pos.y <= sim.groundY && ex.preVy < 0) {
+    const vs = -ex.preVy / P.SC, hs = Math.hypot(vel.x, vel.z) / P.SC, up = tmpV.set(0, 1, 0).applyQuaternion(quat).y, tilt0 = Math.acos(clamp(up, -1, 1)) * 57.29578, tilt = P.SC === 1 ? tilt0 : Math.atan(Math.tan(Math.min(tilt0, 89) / 57.29578) / P.SC) * 57.29578;   // MR試験: 傾きは tan を縮尺で割って本番相当に直す (速度と同じくコースの寸法で判定)
     sim.state = ST_LANDED; vel.set(0, 0, 0); sim.holdXZ = sim.holdY = false; ex.touchT = sim.t; ex.offT = 0;
     try { exLanded(vs, hs, tilt); } catch (e) { exJudgeFail(e); }
   }
@@ -3250,7 +3284,7 @@ function exAfterStop() {
 /* ---- 課題の手順 (試験員の台本) ---- */
 const EX_NOSE = { NONE: 0, FWD: 1, TRAVEL: 2 };                // 機首: 指定なし / 常に前方 (-Z) / 進行方向
 function exObsOf(L) {                                         // 衝突する物 (コーン・パイロン) [x, z, 高さ, 半径]
-  const o = [];
+  const o = [];                                               // MR試験でも判定はコースの寸法のまま (どの縮尺でも同じ難しさ)。小さい縮尺でコーンを見やすく大きく描く分 (MRX_CONE_S_MIN) は当たりに含めない: 含めると 1/3 で 8の字 (高度 1.5 m) の中心のパイロンが高度 1.74 m 相当の障害物になってしまう
   if (L.pts) for (const n in L.pts) o.push([L.pts[n][0], L.pts[n][1], EX_CONE_H, 0.3]);
   if (L.circles) for (const c of L.circles) o.push([c[0], c[1], EX_PYLON_H, 0.35]);
   return o;
@@ -3301,16 +3335,17 @@ function exPlan(item) {
 }
 /** 次の手順を始める (= 試験員が指示を出す)。 */
 function exBegin(i) {
+  exMap();
   if (i > 0) exLegEnd();                                        // 前の区間の締め (次の指示が出る時点まで = 停止を確認する間も含めて見る。H↔A のような短い区間でも「区間全体」を判定できる)
   const altHeld = !!(ex.sv && ex.sv.altArm === false && i > 0);   // 直前の区間で「高度が明らかに異なる」を引いたまま戻っていない: 同じ逸脱を次の区間でもう一度引かない (許容内に戻るまで再判定しない)
   ex.si = i; const S = ex.steps[i]; ex.step = S || null; ex.gap = -1;
-  ex.sv = { t: 0, hov: 0, stopT: 0, stopped: false, zin: false, zUsed: false, zGrace: false, zLate: false, zSecond: false, zT: 0, zOut: 0, dArc: 0, hOk: false, ex0: pos.x, ez0: pos.z, altT: 0, altArm: !altHeld, hT: 0, hArm: true, hdgT: 0, badT: 0, h1: null, h5: false,
+  ex.sv = { t: 0, hov: 0, stopT: 0, stopped: false, zin: false, zUsed: false, zGrace: false, zLate: false, zSecond: false, zT: 0, zOut: 0, dArc: 0, hOk: false, ex0: cm.x, ez0: cm.z, altT: 0, altArm: !altHeld, hT: 0, hArm: true, hdgT: 0, badT: 0, h1: null, h5: false,
     wobT: 0, wobVT: 0, wobF: false, cv: 0, pc: NaN, jerkF: false, crossT: 0, crossF: false, hLeft: false, slowF: false,
     wind: 0, pb: NaN, hIn: false, left: false, dirF: false, arcBad: 0, arc5: false, yw: 0, pyaw: NaN, pt0: -1, pirT: 0, hoverT: 0, dmv: false, ered: 0 };
   if (!S) return;
   if (S.k === 'takeoff' && !ex.started) { ex.started = true; ex.t = 0; }
-  if (S.k === 'goto' && S.fx === undefined) { S.fx = pos.x - ex.ox; S.fz = pos.z - ex.oz; }
-  if (S.k === 'emg' || (S.k === 'goto' && S.toH)) S.a0 = S.a1 = pos.y;      // 緊急: 宣言した時の高度を保つ
+  if (S.k === 'goto' && S.fx === undefined) { S.fx = cm.x - ex.ox; S.fz = cm.z - ex.oz; }
+  if (S.k === 'emg' || (S.k === 'goto' && S.toH)) S.a0 = S.a1 = cm.y;      // 緊急: 宣言した時の高度を保つ
   if (S.txt >= 0) exSay(EX_TXT[S.txt], S.txt);
   if (S.k === 'land') ex.hint = '安全確認の発声：『周囲よし、着陸します』';
   else if (S.k === 'goto' && S.txt === TX.GOH) ex.hint = '安全確認の発声：『周囲よし、着陸します』';
@@ -3321,14 +3356,14 @@ function exDone() {
   if (ex.step && ex.step.emg >= 0) { exTrigger(); return; }      // 緊急事態の宣言が、その区間の終わりまでに出ていなければ、ここで出す
   const N = ex.steps[ex.si + 1];
   if (!N) return;
-  ex.anc.x = pos.x; ex.anc.y = pos.y; ex.anc.z = pos.z; ex.anc.yaw = sim.yaw; ex.movedF = false;
+  ex.anc.x = cm.x; ex.anc.y = cm.y; ex.anc.z = cm.z; ex.anc.yaw = cm.yaw; ex.movedF = false;
   if (N.noGap) exBegin(ex.si + 1); else ex.gap = C.EXJ_GAP;
 }
 /** 緊急事態の宣言: 残りの計画を 停止 → Hへ最短 → 着陸 に差し替える。 */
 function exTrigger() {
   const X = EX_ITEMS[ex.item].course === 'X';
   ex.steps.length = ex.si + 1;
-  const base = { txt: -1, ph: EXP.FLY, a0: pos.y, a1: pos.y, nose: X ? EX_NOSE.FWD : EX_NOSE.NONE, leg: '', tx: 0, tz: 0, fx: undefined, fz: 0, dur: 0, emg: -1, dir: 0, cx: 0, cz: 0, lap: 0, noGap: true, toH: false, settle: false };
+  const base = { txt: -1, ph: EXP.FLY, a0: cm.y, a1: cm.y, nose: X ? EX_NOSE.FWD : EX_NOSE.NONE, leg: '', tx: 0, tz: 0, fx: undefined, fz: 0, dur: 0, emg: -1, dir: 0, cx: 0, cz: 0, lap: 0, noGap: true, toH: false, settle: false };
   ex.steps.push(Object.assign({}, base, { k: 'emg', txt: TX.EMG, leg: '緊急事態: 停止' }));
   ex.steps.push(Object.assign({}, base, { k: 'goto', txt: TX.EMG_H, ph: EXP.EMG, toH: true, leg: '緊急着陸: Hへ' }));
   ex.steps.push(Object.assign({}, base, { k: 'land', ph: EXP.LAND, a0: null, a1: null, leg: '着陸' }));
@@ -3397,7 +3432,7 @@ function exLanded(vs, hs, tilt) {
   if (ex.free || !ex.started || ex.res !== 0 || !S) return;
   if (vs >= C.EX_CRASH) { exFail('墜落（接地の衝撃が大きすぎます）'); return; }
   if (S.k === 'idle' || S.k === 'takeoff') return;           // 離陸の途中で降りた: まだ試験の手順の途中ではない (制限時間は進む)
-  const lx = pos.x - ex.ox, lz = pos.z - ex.oz, inH = Math.hypot(lx, lz) <= EX_H_RADIUS, N = ex.steps[ex.si + 1];
+  const lx = cm.x - ex.ox, lz = cm.z - ex.oz, inH = Math.hypot(lx, lz) <= EX_H_RADIUS, N = ex.steps[ex.si + 1];
   const toLand = S.k === 'goto' && N && N.k === 'land' && inH;   // 「Hへ移動」の途中でも、Hの円の中に降りたなら着陸として扱う
   if (S.k !== 'land' && !toLand) { exFail('指示の手順を中断して着陸しました'); return; }
   if (toLand) exBegin(ex.si + 1);
@@ -3422,8 +3457,9 @@ function exLegEnd() {
 function exStep(dt) {
   if (ex.free || ex.res !== 0) return;
   const S = ex.step; if (!S) return;
-  const sv = ex.sv, lx = pos.x - ex.ox, lz = pos.z - ex.oz, hs = Math.hypot(vel.x, vel.z), alt = pos.y, dH = Math.hypot(lx, lz), al = 1 - Math.exp(-dt / 0.1);
-  ex.axs += ((vel.x - ex.pvx) / dt - ex.axs) * al; ex.azs += ((vel.z - ex.pvz) / dt - ex.azs) * al; ex.pvx = vel.x; ex.pvz = vel.z;     // 水平加速度・旋回の角加速度 (0.1 秒の平滑化)
+  exMap();                                                    // (直前の処理で pos/vel が動いていても、常に今の値で判定する)
+  const sv = ex.sv, lx = cm.x - ex.ox, lz = cm.z - ex.oz, hs = Math.hypot(cm.vx, cm.vz), alt = cm.y, dH = Math.hypot(lx, lz), al = 1 - Math.exp(-dt / 0.1);
+  ex.axs += ((cm.vx - ex.pvx) / dt - ex.axs) * al; ex.azs += ((cm.vz - ex.pvz) / dt - ex.azs) * al; ex.pvx = cm.vx; ex.pvz = cm.vz;     // 水平加速度・旋回の角加速度 (0.1 秒の平滑化)
   ex.yas += ((sim.yawRate - ex.pyr) / dt - ex.yas) * al; ex.pyr = sim.yawRate;
   if (S.k === 'idle') {                                       // 始動 → EXJ_GAP 後に最初の指示 (ここから制限時間)
     if (!ex.armed) { ex.armGap = -1; return; }
@@ -3435,10 +3471,11 @@ function exStep(dt) {
   }
   ex.t += dt; sv.t += dt;
   // --- 即不合格 ---
-  const sp = Math.sqrt(hs * hs + vel.y * vel.y);
+  const sp = Math.sqrt(hs * hs + cm.vy * cm.vy);
   if (sp >= C.EX_V_FAIL) { exFail('危険な速度（' + sp.toFixed(1) + ' m/s）'); return; }
   if (ex.t > ex.limit) { exFail('制限時間超過'); return; }
   for (let i = 0; i < ex.obs.length; i++) { const o = ex.obs[i]; if (alt < o[2] + 0.12 && Math.hypot(lx - o[0], lz - o[1]) < o[3]) { exFail('物件（パイロン等）への衝突'); return; } }
+  if (mrx.hit) { mrx.hit = false; exFail('物件への衝突'); return; }   // MR試験: 検出した壁・天井・天板の裏に触れた (collideMRX が立てる。判定中だけここへ来る)
   // --- 区画 (判定表を適用) ---
   const z = exZone(ex.item, S.ph, lx, lz);
   if (z === 2) { exFail('不合格区画に進入'); return; }
@@ -3476,13 +3513,13 @@ function exStep(dt) {
   else if (S.nose === EX_NOSE.TRAVEL) {
     if (S.k === 'goto') {                                     // 出発点でその場旋回して向きを合わせる間は見ない: 一度向きが合うか、向きが合わないまま出発点から EXJ_TURN_R 以上離れたら、そこから見る
       want = Math.atan2(-(S.tx - S.fx), -(S.tz - S.fz));
-      if (!sv.hOk && (Math.abs(angleDiff(sim.yaw, want)) * 57.29578 < C.EXJ_HDG_REARM || Math.hypot(lx - S.fx, lz - S.fz) > C.EXJ_TURN_R)) sv.hOk = true;
+      if (!sv.hOk && (Math.abs(angleDiff(cm.yaw, want)) * 57.29578 < C.EXJ_HDG_REARM || Math.hypot(lx - S.fx, lz - S.fz) > C.EXJ_TURN_R)) sv.hOk = true;
       grace = sv.t < C.EXJ_TURN_GRACE || !sv.hOk;
     }
     else if (S.k === 'circ') { const rx = lx - S.cx, rz = lz - S.cz, r = Math.hypot(rx, rz) || 1; want = Math.atan2(-(-rz / r * S.dir), -(rx / r * S.dir)); grace = sv.t < 2 || r < 0.8; }
   }
   if (want === want && !grace) {
-    const er = Math.abs(angleDiff(sim.yaw, want)) * 57.29578;
+    const er = Math.abs(angleDiff(cm.yaw, want)) * 57.29578;
     sv.hdgT += dt; if (er > C.EXJ_HDG_BAD) sv.badT += dt;
     if (!sv.hArm) { if (er < C.EXJ_HDG_REARM) { sv.hArm = true; sv.hT = 0; } }
     else if (er > C.EXJ_HDG_ERR) { sv.hT += dt; if (sv.hT > C.EXJ_HDG_T) { sv.hArm = false; sv.h1 = exFault(1, '一時的に機首が指示と異なる方向', Math.round(er) + '°'); } }
@@ -3502,14 +3539,14 @@ function exStep(dt) {
     const ramp = S.k === 'goto' && S.a0 !== S.a1 && S.a0 !== null;
     if (!sv.wobF) {
       if (Math.abs(sv.cv) > C.EXJ_WOB_LAT) sv.wobT += dt; else sv.wobT = Math.max(0, sv.wobT - dt);
-      if (!ramp && Math.abs(vel.y) > C.EXJ_WOB_VY) sv.wobVT += dt; else sv.wobVT = Math.max(0, sv.wobVT - dt);
+      if (!ramp && Math.abs(cm.vy) > C.EXJ_WOB_VY) sv.wobVT += dt; else sv.wobVT = Math.max(0, sv.wobVT - dt);
       if (sv.wobT > C.EXJ_WOB_T || sv.wobVT > C.EXJ_WOB_T) { sv.wobF = true; exFault(1, '大きなふらつき', sv.wobT > C.EXJ_WOB_T ? '横ずれ' : '上下'); }
     }
     if (!sv.jerkF && S.k !== 'hover' && (Math.hypot(ex.axs, ex.azs) > C.EXJ_ACC || Math.abs(ex.yas) > C.EXJ_YAW_ACC)) { sv.jerkF = true; exFault(1, '急な加減速・急旋回・急停止'); }
   }
   // --- 次の指示までの間 ---
   if (ex.gap >= 0) {
-    if (!ex.movedF && (Math.hypot(pos.x - ex.anc.x, pos.y - ex.anc.y, pos.z - ex.anc.z) > (ex.hold ? C.EXJ_MOVE_POS : C.EXJ_MOVE_POS_ATTI) || Math.abs(angleDiff(sim.yaw, ex.anc.yaw)) * 57.29578 > C.EXJ_MOVE_YAW)) { ex.movedF = true; exFault(5, '指示を受ける前に移動・姿勢変化'); }
+    if (!ex.movedF && (Math.hypot(cm.x - ex.anc.x, cm.y - ex.anc.y, cm.z - ex.anc.z) > (ex.hold ? C.EXJ_MOVE_POS : C.EXJ_MOVE_POS_ATTI) || Math.abs(angleDiff(cm.yaw, ex.anc.yaw)) * 57.29578 > C.EXJ_MOVE_YAW)) { ex.movedF = true; exFault(5, '指示を受ける前に移動・姿勢変化'); }
     ex.gap -= dt; if (ex.gap <= 0) exBegin(ex.si + 1);
     return;
   }
@@ -3554,12 +3591,12 @@ function exStep(dt) {
       if (sv.stopT >= C.EXJ_STOP_T) sv.stopped = true;
       if (sv.stopped) { sv.hoverT += dt; if (sv.hoverT >= C.EXJ_EMG_HOVER_S) exDone(); }
       else if (sv.t > C.EXJ_EMG_STOP_S && !sv.slowF) { sv.slowF = true; exFault(5, '指示と異なる手順・方向', 'その場で止まらない'); }
-      if (!sv.slowF && Math.hypot(pos.x - sv.ex0, pos.z - sv.ez0) > C.EXJ_EMG_DRIFT) { sv.slowF = true; exFault(5, '指示と異なる手順・方向', 'その場でホバリングしない'); }   // 宣言された位置から大きく離れた (止まらないのと同じ事象: 二重には引かない)
+      if (!sv.slowF && Math.hypot(cm.x - sv.ex0, cm.z - sv.ez0) > C.EXJ_EMG_DRIFT) { sv.slowF = true; exFault(5, '指示と異なる手順・方向', 'その場でホバリングしない'); }   // 宣言された位置から大きく離れた (止まらないのと同じ事象: 二重には引かない)
       break;
     }
     case 'pir': {                                             // 回った角度 (指示の向きが正)。1回転 (360° − 17°) にかかった時間から所要を出し、EXJ_PIR_MIN〜MAX [s] を外れたら 5点。逆回りは 5点
-      if (sv.pyaw === sv.pyaw) sv.yw += -angleDiff(sim.yaw, sv.pyaw) * S.dir;
-      sv.pyaw = sim.yaw;
+      if (sv.pyaw === sv.pyaw) sv.yw += -angleDiff(cm.yaw, sv.pyaw) * S.dir;
+      sv.pyaw = cm.yaw;
       if (sv.pt0 < 0 && Math.abs(sv.yw) >= 0.3) sv.pt0 = sv.t;
       if (sv.yw <= -Math.PI / 2 && !sv.dirF) { sv.dirF = true; exFault(5, '指示と異なる手順・方向', '回る向きが逆'); }
       if (sv.yw >= 2 * Math.PI - 0.3) {
@@ -3582,17 +3619,17 @@ let exDvx = 0, exDvz = 0, exDyc = 0;
 function exDemoCommands(dt) {
   const S = ex.step;
   vCmd.set(0, 0, 0); yawCmd = 0;
-  if (!S) { exDvx = vel.x; exDvz = vel.z; return; }
-  const lx = pos.x - ex.ox, lz = pos.z - ex.oz, sv = ex.sv, dd = Math.hypot(lx, lz);
+  if (!S) { exDvx = cm.vx; exDvz = cm.vz; return; }
+  const lx = cm.x - ex.ox, lz = cm.z - ex.oz, sv = ex.sv, dd = Math.hypot(lx, lz);
   let wx = 0, wz = 0, wantYaw = NaN, vy = 0, V = C.EX_DEMO_V, spin = NaN;
   if (ex.res !== 0) {                                          // 試験が終わっている (不合格など) のに飛んでいる: Hへ戻って降りる
     if (dd > 0.05) { const v = Math.min(1.5, dd * 0.8); wx = -lx / dd * v; wz = -lz / dd * v; }
-    vy = dd > 0.6 ? 0 : -clamp(0.15 + pos.y * 0.35, 0.15, 0.7);
+    vy = dd > 0.6 ? 0 : -clamp(0.15 + cm.y * 0.35, 0.15, 0.7);
   } else if (ex.gap >= 0) {                                    // 次の指示を待つ間: その場で静止 (高度・向きも保つ)
-    vy = clamp((ex.anc.y - pos.y) * 1.6, -1.2, 1.2);
+    vy = clamp((ex.anc.y - cm.y) * 1.6, -1.2, 1.2);
   } else switch (S.k) {
-    case 'takeoff': vy = clamp((S.a1 - pos.y) * 1.5, 0.25, 1.5); if (dd > 0.05) { const v = Math.min(0.6, dd * 0.8); wx = -lx / dd * v; wz = -lz / dd * v; } break;   // Hの真上を保って上昇
-    case 'hover': vy = clamp((S.a1 - pos.y) * 1.6, -1.2, 1.2); if (dd > 0.25) { const v = Math.min(0.4, (dd - 0.2) * 0.8); wx = -lx / dd * v; wz = -lz / dd * v; } break;
+    case 'takeoff': vy = clamp((S.a1 - cm.y) * 1.5, 0.25, 1.5); if (dd > 0.05) { const v = Math.min(0.6, dd * 0.8); wx = -lx / dd * v; wz = -lz / dd * v; } break;   // Hの真上を保って上昇
+    case 'hover': vy = clamp((S.a1 - cm.y) * 1.6, -1.2, 1.2); if (dd > 0.25) { const v = Math.min(0.4, (dd - 0.2) * 0.8); wx = -lx / dd * v; wz = -lz / dd * v; } break;
     case 'goto': {
       const toH = S.toH, tx = S.tx, tz = S.tz, fx = S.fx === undefined ? lx : S.fx, fz = S.fx === undefined ? lz : S.fz;
       const dx = tx - fx, dz = tz - fz, len = Math.hypot(dx, dz) || 1, ux = dx / len, uz = dz / len;
@@ -3601,14 +3638,14 @@ function exDemoCommands(dt) {
       V = sideways ? C.EX_DEMO_VX : S.a0 !== null && S.a0 !== S.a1 ? 1.0 : C.EX_DEMO_V;
       if (S.nose === EX_NOSE.TRAVEL) {
         wantYaw = Math.atan2(-ux, -uz);
-        if (!sv.dmv && Math.abs(angleDiff(wantYaw, sim.yaw)) < 0.1) sv.dmv = true;     // 向きを合わせてから進む (その場で旋回)
+        if (!sv.dmv && Math.abs(angleDiff(wantYaw, cm.yaw)) < 0.1) sv.dmv = true;     // 向きを合わせてから進む (その場で旋回)
       } else if (S.nose === EX_NOSE.FWD) { wantYaw = 0; sv.dmv = true; } else sv.dmv = true;
       if (sv.dmv) {
         const v = Math.min(V, 0.9 * dist), kc = clamp(cross, -1, 1);
         wx = ux * v - uz * kc; wz = uz * v + ux * kc;                                  // 経路の左手の直交 (-uz, ux) に cross を掛けて足す = 経路へ復帰
       }
-      const ty = S.a0 !== null && !toH ? S.a0 + (S.a1 - S.a0) * clamp(along / len, 0, 1) : S.a1 === null ? pos.y : S.a1;
-      vy = clamp((ty - pos.y) * 1.6, -1.2, 1.2);
+      const ty = S.a0 !== null && !toH ? S.a0 + (S.a1 - S.a0) * clamp(along / len, 0, 1) : S.a1 === null ? cm.y : S.a1;
+      vy = clamp((ty - cm.y) * 1.6, -1.2, 1.2);
       if (toH && dist < 0.3) { wx = wz = 0; }
       break;
     }
@@ -3618,14 +3655,14 @@ function exDemoCommands(dt) {
       V = C.EX_DEMO_VC;
       const e = r - R, lead = V / R * 0.45, cl = Math.cos(lead), sl = Math.sin(lead);   // 速度指令を少し先の接線へ向ける = 接線を円の内側 (-n) へ lead だけ回す (制御の遅れの分)
       wx = (tx * cl - nx * sl) * V - nx * clamp(e, -1, 1) * 1.5; wz = (tz * cl - nz * sl) * V - nz * clamp(e, -1, 1) * 1.5;
-      wantYaw = Math.atan2(-tx, -tz); vy = clamp((S.a1 - pos.y) * 1.6, -1.2, 1.2);
+      wantYaw = Math.atan2(-tx, -tz); vy = clamp((S.a1 - cm.y) * 1.6, -1.2, 1.2);
       break;
     }
-    case 'emg': vy = clamp((S.a1 - pos.y) * 1.6, -1.2, 1.2); wantYaw = S.nose === EX_NOSE.FWD ? 0 : NaN; break;     // その場で止まる (速度指令 0)
-    case 'pir': spin = -S.dir * 2 * Math.PI / C.EXJ_PIR_SEC; vy = clamp((S.a1 - pos.y) * 1.6, -1.2, 1.2); if (dd > 0.25) { const v = Math.min(0.4, (dd - 0.2) * 0.8); wx = -lx / dd * v; wz = -lz / dd * v; } break;
+    case 'emg': vy = clamp((S.a1 - cm.y) * 1.6, -1.2, 1.2); wantYaw = S.nose === EX_NOSE.FWD ? 0 : NaN; break;     // その場で止まる (速度指令 0)
+    case 'pir': spin = -S.dir * 2 * Math.PI / C.EXJ_PIR_SEC; vy = clamp((S.a1 - cm.y) * 1.6, -1.2, 1.2); if (dd > 0.25) { const v = Math.min(0.4, (dd - 0.2) * 0.8); wx = -lx / dd * v; wz = -lz / dd * v; } break;
     case 'land': {
       if (dd > 0.05) { const v = Math.min(0.6, dd * 0.8); wx = -lx / dd * v; wz = -lz / dd * v; }
-      const h = pos.y; vy = -clamp(0.15 + h * 0.35, 0.15, 0.7); if (h < 0.35) vy = -0.22;
+      const h = cm.y; vy = -clamp(0.15 + h * 0.35, 0.15, 0.7); if (h < 0.35) vy = -0.22;
       break;
     }
     default: break;
@@ -3633,8 +3670,9 @@ function exDemoCommands(dt) {
   // 速度指令の加速度制限 (急な操作にならないように) と向きの追従 (旋回の角加速度も制限)
   const mx = wx - exDvx, mz = wz - exDvz, ml = Math.hypot(mx, mz), lim = 1.2 * dt;
   if (ml > lim) { exDvx += mx / ml * lim; exDvz += mz / ml * lim; } else { exDvx = wx; exDvz = wz; }
-  vCmd.set(exDvx, vy, exDvz);
-  let yc = spin === spin ? spin : wantYaw === wantYaw ? clamp(angleDiff(wantYaw, sim.yaw) * 2.0, -1.0, 1.0) : 0;
+  if (cf.on) { const s = cf.s; vCmd.set(s * (exDvx * cf.c + exDvz * cf.sn), vy * s, s * (-exDvx * cf.sn + exDvz * cf.c)); }   // MR試験: コース座標の指令を実際の床の向きと縮尺へ
+  else vCmd.set(exDvx, vy, exDvz);
+  let yc = spin === spin ? spin : wantYaw === wantYaw ? clamp(angleDiff(wantYaw, cm.yaw) * 2.0, -1.0, 1.0) : 0;
   const ml2 = yc - exDyc, lim2 = 2.0 * dt; exDyc += Math.abs(ml2) > lim2 ? Math.sign(ml2) * lim2 : ml2;
   yawCmd = exDyc;
 }
@@ -3646,6 +3684,7 @@ function exResetDrone() {                                      // ドローン�
 /** A: お手本飛行の開始/終了。開始 = 最初からやり直して自動で始動する。終了 (もう一度A / スティックに触れる) = 手動に戻して「未開始」にリセット。 */
 function exDemoToggle() {
   if (!world.ex) return;
+  if (world.mrx && mrx.placing) { exNotice('先にコースを配置してください（右トリガー）'); return; }
   if (ex.free) { exCycleWind(); return; }                      // フリー練習: A = 風の強さ (無風 → 弱 → 中)。お手本はない
   if (sim.mode === MODE_AUTO) { exDemoStop(); return; }
   sim.mode = MODE_AUTO; exResetDrone(); exRestart(); ex.armed = true; ex.armT = sim.t;
@@ -3670,6 +3709,7 @@ function exRestart() {
   exApplyDisp();
 }
 function exPlaceAtHome() {
+  if (cf.on) { mrxPlaceHome(); return; }                       // MR試験: コースの原点 = 実際の床の上
   const slot = exOwnSlot(); exOrigin(slot, _exO); ex.ox = _exO.x; ex.oz = _exO.z;
   world.home.set(ex.ox, 0, ex.oz); pos.set(ex.ox, 0, ex.oz); sim.groundY = 0; sim.yaw = 0;
 }
@@ -3684,17 +3724,19 @@ const exCanSwitch = () => world.ex && sim.state === ST_LANDED && !ex.armed && fa
 function exCycleItem() {
   if (!world.ex) return;
   if (!exCanSwitch()) { exNotice('科目の切替は、着陸してモーターを止めている時だけです'); return; }
-  const n = (ex.item + 1) % EX_ITEMS.length;
-  if (spec.on) { exSetItem(n); return; }
+  const n = (ex.item + 1) % (world.mrx ? EX_NSUBJ : EX_ITEMS.length);   // MR試験はフリー練習なし (6科目)
+  if (spec.on || world.mrx) { exSetItem(n); return; }   // MR試験は暗転しない (パススルーを黒で覆わない)
   fade.phase = 1; fade.t = 0; fade.black = 0; fade.hold = 0; fade.kind = 3; fade.arg = n;
 }
 function exSetItem(n) {
   if (!world.ex || sim.state !== ST_LANDED) return;
   const d0 = exLayout().D, it = EX_ITEMS[n];
   ex.item = n; ex.hold = it.hold; ex.armed = false;
-  exPlaceAtHome(); exRestart(); exSyncCells(false); exBeep(660, 0.08, 0.12);
+  if (world.mrx) mrxItemChanged(d0);                             // MR試験: 受験者の立ち位置を動かさず、原点を取り直す
+  exPlaceAtHome(); exRestart(); if (!world.mrx) exSyncCells(false); exBeep(660, 0.08, 0.12);
   void d0; if (world.cam === 1) vrRigResnap();                   // 操縦者目線を新しい科目の受験者の位置へ置き直す (向きは入った時のまま)
   exNotice(it.free ? 'フリー練習: 判定なし。左Y長押し=位置安定 ON/OFF　A=風' : it.name + '（位置安定 ' + (ex.hold ? 'ON' : 'OFF') + '）');
+  if (world.mrx) mrxAfterItem();
 }
 /** フリー練習だけ: 位置安定 ON/OFF (左Y長押し 1 秒)。 */
 function exToggleHold() {
@@ -3704,8 +3746,8 @@ function exToggleHold() {
 }
 /** 左トリガー短押し: 本番表示 ⇄ 補助表示。 */
 function exToggleDisp() {
-  ex.disp = ex.disp === 1 ? 0 : 1; exApplyDisp();
-  exNotice(ex.disp === 1 ? '補助表示（区画の塗り・高度の目安・目標・影の点）' : '本番表示（標示のみ）');
+  ex.disp = ex.disp === 1 ? 0 : 1; exApplyDisp(); mrxApplyDisp();
+  exNotice(ex.disp === 1 ? (world.mrx ? '補助表示（区画の塗り・高度の目安・目標・影の点・遠くの機体の輪）' : '補助表示（区画の塗り・高度の目安・目標・影の点）') : '本番表示（標示のみ）');
 }
 /** 左トリガー長押し: 今の試行をやり直す (ドローンはHに戻り停止)。 */
 function exRestartHold() {
@@ -3814,7 +3856,7 @@ function exTxId() {
 }
 function exHudSig() {
   return [ex.item, ex.si, ex.gap >= 0 ? 1 : 0, ex.hold ? 1 : 0, ex.disp, ex.res, ex.score, ex.faults.length, Math.ceil(exRem()), ex.armed ? 1 : 0, ex.wind, ex.free ? 1 : 0, ex.noticeT > 0 ? ex.notice : '', ex.sv ? Math.floor(ex.sv.hov * 2) : 0, ex.sv ? Math.floor(ex.sv.yw * 6) : 0,
-    sim.mode, ex.demo ? 1 : 0, stickMode, ex.say, ex.run.n, ex.hint, Math.round(ex.altDev * 10)].join('|');
+    sim.mode, ex.demo ? 1 : 0, stickMode, ex.say, ex.run.n, ex.hint, Math.round(ex.altDev * 10), world.mrx ? mrxHudSig() : 0].join('|');
 }
 /** 減点の一覧 (表示用): 不 → 点数の大きい順 → 時刻の順。上位 n 件。 */
 function exTopFaults(n) {
@@ -3826,7 +3868,7 @@ const exNDed = () => { let n = 0; for (let i = 0; i < ex.faults.length; i++) if 
 const exRunLine = () => { const R = ex.run; return R.n > 0 ? '通し ' + R.n + '/3科目　残り ' + (100 - R.ded) + ' 点' + (R.n === 3 ? ((100 - R.ded) >= EX_PASS[R.g] && !R.fail ? '　合格' : '　不合格') : '') : ''; };
 /** 試験場のHUD (512x256): 科目 / 高度 (大) + 速度 / 位置安定・表示・残り時間・得点 / 指示 / 補足 / 凡例。 */
 function exDrawHud() {
-  const x = hudCtx, it = EX_ITEMS[ex.item], alt = Math.max(0, pos.y - sim.groundY), spd = vel.length();
+  const x = hudCtx, it = EX_ITEMS[ex.item], hsc = cf.on ? cf.s : 1, altR = Math.max(0, pos.y - sim.groundY), alt = hsc === 1 ? altR : altR / hsc, spd = hsc === 1 ? vel.length() : vel.length() / hsc;   // MR試験: 高度・速度はコースの寸法 (= 本番の値。試験員の指示・目標・5 m/s と同じ単位) で出し、実寸は小さく添える
   x.clearRect(0, 0, 512, 256);
   x.fillStyle = 'rgba(10,16,24,0.9)'; exRR(x, 4, 4, 504, 248, 22); x.fill();
   x.strokeStyle = ex.res === 1 ? 'rgba(80,220,140,0.95)' : ex.res === 2 ? 'rgba(235,90,80,0.95)' : 'rgba(90,150,235,0.9)'; x.lineWidth = 3; x.stroke();
@@ -3834,6 +3876,7 @@ function exDrawHud() {
   const wl = worldLabel(); x.font = 'bold 15px sans-serif'; const bw = Math.ceil(x.measureText(wl).width) + 14;
   x.fillStyle = 'rgba(58,123,213,0.95)'; exRR(x, 494 - bw, 10, bw, 22, 8); x.fill(); x.fillStyle = '#fff'; x.fillText(wl, 494 - bw + 7, 13);
   x.fillStyle = '#9fd3ff'; fitText(x, it.name + (it.no ? '（' + it.no + '）' : ''), 18, 10, 470 - bw, 20, 12, true);
+  if (world.mrx && mrx.placing) { mrxDrawHudPlacing(x); hudTex.needsUpdate = true; return; }   // MR試験: 配置中
   const noteOn = ex.noticeT > 0 && ex.notice;
   if (ex.res) {                                               // --- 結果 ---
     const pass = exPassOf(ex.item);
@@ -3851,6 +3894,7 @@ function exDrawHud() {
   x.fillStyle = '#9fb3c8'; x.font = '15px sans-serif'; x.fillText('高度', 18, 40);
   x.fillStyle = '#ffffff'; x.font = 'bold 56px sans-serif'; const av = alt.toFixed(2); x.fillText(av, 54, 28); const aw = x.measureText(av).width;
   x.font = 'bold 24px sans-serif'; x.fillText('m', 60 + aw, 52);
+  if (world.mrx) { x.fillStyle = '#9fd3ff'; fitText(x, mrxAltText(altR), 54, 84, 258, 16, 9, true); }   // MR試験: 大きい数字 = 本番換算 (コースの寸法)。実寸と縮尺を添える
   x.fillStyle = '#e8eef5'; x.font = 'bold 22px sans-serif'; x.textAlign = 'right'; x.fillText(spd.toFixed(1) + ' m/s', 494, 38); x.textAlign = 'left';
   const S = ex.step, hasTgt = !ex.free && S && S.a1 !== null && S.k !== 'idle' && ex.altInfo;
   if (hasTgt) {
@@ -3875,14 +3919,14 @@ function exDrawHud() {
   x.fillStyle = '#8fa3b8';
   fitText(x, 'B=モーター　Y=科目　A=お手本　左トリガー=表示/長押しやり直し', 18, 218, 476, 14, 10, false);
   if (vrHold.step > 0) drawHoldBar(x, 235, 476);
-  else fitText(x, '左スティック押込み=視点　右スティック長押し=ワールド　' + (stickMode === 1 ? 'モード1（昇降=右）' : 'モード2（昇降=左）'), 18, 235, 476, 14, 10, false);
+  else fitText(x, (world.mrx ? '左スティック押込み=スペース設定　右トリガー長押し=再配置　右スティック長押し=ワールド　' : '左スティック押込み=視点　右スティック長押し=ワールド　') + (stickMode === 1 ? 'モード1（昇降=右）' : 'モード2（昇降=左）'), 18, 235, 476, 14, 9, false);
   hudTex.needsUpdate = true;
 }
 
 /* ---- 掲示板: 受験者の右に立つ。下 = 指示板 (HUDと同じ内容を大きく) / 上 = 情報・結果板 (k = セルの並び順) ---- */
 const EX_CITE = '出典：国土交通省「一等／二等無人航空機操縦士実地試験実施細則（回転翼航空機）」III章4 実技試験・II章 減点適用基準';
-function exBoardDraw(k, v) {
-  const col = k % C.EX_COLS, row = (k / C.EX_COLS) | 0, x = exw.boardCv.getContext('2d'), px = col * EX_BW, py = row * EX_BH, it = EX_ITEMS[v.item] || EX_ITEMS[0];
+function exBoardDraw(k, v, cvv, tex) {                          // cvv / tex: MR試験の小さな掲示板が自分のキャンバスへ描く時だけ指定
+  const col = k % C.EX_COLS, row = (k / C.EX_COLS) | 0, x = (cvv || exw.boardCv).getContext('2d'), px = col * EX_BW, py = row * EX_BH, it = EX_ITEMS[v.item] || EX_ITEMS[0];
   x.save(); x.beginPath(); x.rect(px, py, EX_BW, EX_BH); x.clip(); x.translate(px, py);
   x.textBaseline = 'top'; x.textAlign = 'left';
   const pass = EX_PASS[it.grade] || 0;
@@ -3924,7 +3968,7 @@ function exBoardDraw(k, v) {
     x.fillStyle = '#ffffff'; x.textAlign = 'right'; fitText(x, '残 ' + exMMSS(v.rem), EX_BW - 16, 214, 290, 56, 22, true); x.textAlign = 'left';
   }
   x.fillStyle = v.hold ? '#7dffb0' : '#ffb14a'; fitText(x, '位置安定 ' + (v.hold ? 'ON' : 'OFF') + (v.demo ? '　お手本飛行' : ''), 16, 286, EX_BW - 32, 22, 12, true);
-  x.restore(); exw.boardTex.needsUpdate = true;
+  x.restore(); (tex || exw.boardTex).needsUpdate = true;
 }
 function exBoardData() {
   const r = exInstr(), it = EX_ITEMS[ex.item], top = exTopFaults(8), b = exBest(it.id);
@@ -3950,7 +3994,7 @@ function exBoardTick(dt) {
 }
 
 /* ---- 字幕 (頭に固定): 視界の下寄りに出て数秒で消える ---- */
-let exCapMesh = null, exCapDrawn = '', exCapCtx = null, exCapTex = null;
+let exCapMesh = null, exCapDrawn = '', exCapKind = -1, exCapCtx = null, exCapTex = null;
 function exCapInit() {
   if (exCapMesh) return;
   const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 176; exCapCtx = cv.getContext('2d');
@@ -3963,9 +4007,8 @@ function exCapUpdate() {
   exCapInit();
   const c = ex.cap, show = world.ex && c.t > 0 && !spec.on;
   if (!show) { exCapMesh.visible = false; return; }
-  const key = c.kind + '|' + c.txt;
-  if (key !== exCapDrawn) {
-    exCapDrawn = key; const x = exCapCtx;
+  if (c.kind !== exCapKind || c.txt !== exCapDrawn) {             // (字幕が出ている間、毎フレーム文字列を作らない)
+    exCapKind = c.kind; exCapDrawn = c.txt; const x = exCapCtx;
     x.clearRect(0, 0, 1024, 176);
     x.fillStyle = c.kind === 1 ? 'rgba(70,36,8,0.88)' : 'rgba(8,20,40,0.88)'; exRR(x, 4, 4, 1016, 168, 28); x.fill();
     x.strokeStyle = c.kind === 1 ? 'rgba(255,170,70,0.95)' : 'rgba(120,180,255,0.95)'; x.lineWidth = 5; x.stroke();
@@ -4033,6 +4076,551 @@ function exDump(item) {
 }
 
 /* =====================================================================
+ * 15b. MR試験 (v0.9, ワールド id 3)
+ *   現実の部屋の床に、試験場と同じ6科目のコースを縮尺 (原寸 / 3/4 / 1/2 / 1/3) で描き、実際の自分の位置 (受験者) に立ったまま、パススルー越しに仮想ドローンを目視で飛ばす練習。1人用。
+ *   ・パススルーのまま: リグは恒等・空も地面も木も人形も柵もなし・霧なし・クリア色は透明 (MRと同じ)。深度メッシュ (オクルージョン) だけ描かない。VRのような near/far の上書き・クリアの変更はしない。
+ *   ・コース枠 (cf): 床の上の剛体変換 (原点 ox,oz・向き yaw・床の高さ y) と一様な縮尺 s。コース座標 = 試験場と同じ (原点 = Hの中心、+X = 受験者の右、-Z = 前方、受験者は (0, D))。
+ *       実座標 = 原点 + s · Ry(yaw) · コース座標。判定 (exStep・お手本・区画) はすべてコース座標 (cm = 機体の位置・速度・向きを写したもの) で動く → 区画・円・高度・5 m/s は s 倍の実寸になる。制限時間は縮尺しない。
+ *   ・力学の相似 (P_MRX): 時間を変えずに、コース座標で縮尺 1 と同じ軌跡になるよう、最大速度・上昇下降・傾き (tan を s 倍)・風・離陸の初速を s 倍、2乗抵抗を s で割る。姿勢の遅れ・旋回速度は変えない。縮尺 1 (VR試験場) は従来の式のまま。
+ *   ・配置 (PLACING): 入った直後と「右トリガー1秒長押し (モーター停止・着陸中)」の後。頭の床への投影に受験者の印を合わせ、コースの正面 (-Z) を頭の向きに合わせる (なめらかに追従)。
+ *       Y = 縮尺 / 左スティック左右 (フリック) = 科目 / 右スティック = 微調整 0.5 m/s (右グリップを押しながら左右 = 向き) / 右トリガー = 配置。配置後の Y = 科目。
+ *       広さの確認 (5 Hz): 必要な広さ・障害物 (壁 / 床上 0.3〜2.2 m の水平面) との重なり・天井の高さ。重なっても配置はできる (赤は警告だけ)。
+ *       アンカー: 配置の瞬間にコース原点へ XRAnchor を作り、毎フレームその姿勢でコースを更新する (向きと床の平行移動だけ。床の高さは変えない)。作れなければ黙って固定。
+ *   ・安全枠: 描いた範囲の外側へ 3 m × max(縮尺, 0.5) (コース座標系) / 天井 = 検出した天井、無ければ 最大高度 × 縮尺 + 2 m。検出した平面への接触は「物件への衝突」(判定中は 不)。
+ * ===================================================================== */
+const WORLD_NEXT = [3, 2, 0, 1];                               // ワールドの順: MR → MR試験 → 自然 → 試験場 → MR (id の次)
+const MRX_SNAME = ['1/1', '3/4', '1/2', '1/3'];
+const MRX_NOCTRL = 'コントローラーを持ってください（MR試験は手だけでは操作できません）';
+const MRX_MAXALT = [3.5, 1.5, 3.5, 3.5, 3.5, 1.5];             // 科目ごとの最大高度 [m] (EX_ITEMS の並び。一等スクエアは C・D で 3.5 m)
+
+const cf = { on: false, s: 1, yaw: 0, ox: 0, oz: 0, y: 0, c: 1, sn: 0 };      // コース枠 (on = MR試験中)
+const cm = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, yaw: 0 };                  // 機体のコース座標 (位置・速度は コース m。向きは コース前方 (-Z) が 0)
+/** 実座標 → コース座標。試験場 (cf.on = false) は実座標そのまま (同じ値を写すだけ = 従来とビット一致)。 */
+function exMap() {
+  if (!cf.on) { cm.x = pos.x; cm.y = pos.y; cm.z = pos.z; cm.vx = vel.x; cm.vy = vel.y; cm.vz = vel.z; cm.yaw = sim.yaw; return; }
+  const s = cf.s, c = cf.c, sn = cf.sn, dx = pos.x - cf.ox, dz = pos.z - cf.oz;
+  cm.x = (dx * c - dz * sn) / s; cm.z = (dx * sn + dz * c) / s; cm.y = (pos.y - cf.y) / s;
+  cm.vx = (vel.x * c - vel.z * sn) / s; cm.vz = (vel.x * sn + vel.z * c) / s; cm.vy = vel.y / s;
+  cm.yaw = angleDiff(sim.yaw, cf.yaw);
+}
+/** コース座標 → 実座標 (位置)。出力は o.x / o.z。 */
+function cfToWorld(x, z, o) { o.x = cf.ox + cf.s * (x * cf.c + z * cf.sn); o.z = cf.oz + cf.s * (-x * cf.sn + z * cf.c); return o; }
+function mrxSetFrame(ox, oz, yaw) { cf.ox = ox; cf.oz = oz; cf.yaw = angleDiff(yaw, 0); cf.c = Math.cos(cf.yaw); cf.sn = Math.sin(cf.yaw); }
+
+/* ---- 力学の相似 (縮尺ごとの飛行パラメータ) ---- */
+const P_MRX = C.MRX_SCALES.map((s) => Object.freeze({
+  MAN_V: C.EX_MAN_V * s, MAN_VY: C.EX_MAN_VY * s, MAN_YAW: C.EX_MAN_YAW, MAX_TILT: Math.atan(s * Math.tan(C.EX_MAX_TILT)), TAKEOFF_ALT: 0.5 * s, DRAG_QUAD: C.VR_DRAG_QUAD / s,
+  AUTO_VMAX: C.EX_DEMO_V * s, AUTO_VY_MAX: 1.0 * s, RECALL_VMAX: C.EX_DEMO_V * s, TAKEOFF_VY: C.EX_MAN_VY * s, LAND_VY: 0.5 * s, DRAG_FF: 1, EX: 1,
+  ATTI_TILT: Math.atan(s * Math.tan(C.EX_ATTI_TILT)), ATTI_DRAG: C.EX_ATTI_DRAG, SC: s }));
+function mrxPidScale(s) { pidPx.sc = pidPz.sc = pidPy.sc = pidVx.sc = pidVz.sc = pidVy.sc = s; }
+function mrxSetScale(i) {
+  i = clamp(i | 0, 0, C.MRX_SCALES.length - 1); mrx.si = i; cf.s = C.MRX_SCALES[i];
+  if (world.mrx) Object.assign(P, P_MRX[i]);
+  mrxPidScale(cf.s);
+}
+
+/* ---- 状態 ---- */
+const mrx = {
+  placing: true, si: 0,                                        // 配置待ち / 縮尺の添字
+  mx: 0, mz: 0, yaw: 0, smInit: false,                         // 受験者の印 (実座標 x,z) と コースの向き (なめらかにした値)
+  offX: 0, offZ: 0, offYaw: 0, rsx: 0, rsy: 0, grip: false,    // 微調整 (コース軸の実 m / rad) と 右スティック・右グリップ
+  hit: false,                                                  // この物理ステップで 検出した平面に触れた
+  anchor: null, anchorPend: false, anchorFail: false, anchorFailN: 0, anchorGen: 0, needAnchor: false, anchorN: 0, anchorUpd: 0, anchorJump: 0, noCtrl: false,   // anchorFailN: このセッションで作成に失敗した回数 (3回で以後は試さない) / anchorJump: アンカーの補正でコースを動かした回数 / noCtrl: コントローラーなし (配置できない) の注記を出している
+  rt: { t0: 0, fired: false, ok: false }, flick: false,
+  fit: { lvl: 0, wall: false, obs: false, ceil: NaN, need: 0, planes: 0, sug: -1, foot: '', msg1: '', msg2: '', sugTxt: '', sig: -1, w: 0, d: 0 },
+  fitAcc: 1, fitN: 0, enterPulse: false, capOn: false, dirty: true, rec: null, bAcc: 0, bSig: '', noteOn: false,
+};
+const mrxw = { built: false, group: null, paint: null, casing: null, penZ: null, failZ: null, labels: null, cones: null, pylons: null, poles: null, props: null, tgt: null, dot: null, outline: null, board: null, far: null, boardCv: null, boardTex: null, key: -1, kk: 1, syncN: 0, buildMs: 0, outCol: -1 };
+const MRX_QI = new THREE.Quaternion(), _mrS = new THREE.Vector3(), _mrP = new THREE.Vector3(), _mrM = new THREE.Matrix4(), _mrW = { x: 0, z: 0 };
+
+/** 原点 = 受験者の印 − s · Ry(yaw) · (0, D)。 */
+function mrxApplyMark() {
+  const D = exLayout().D, s = cf.s, c = Math.cos(mrx.yaw), sn = Math.sin(mrx.yaw);
+  mrxSetFrame(mrx.mx - s * D * sn, mrx.mz - s * D * c, mrx.yaw);
+}
+function mrxPlaceHome() {                                      // 機体を H (コースの原点) の実床の上へ。試験場の exPlaceAtHome の MR試験版
+  ex.ox = 0; ex.oz = 0;
+  world.home.set(cf.ox, cf.y, cf.oz); pos.set(cf.ox, cf.y, cf.oz); sim.groundY = cf.y; sim.yaw = cf.yaw;
+}
+function mrxShow(v) { if (mrxw.group) mrxw.group.visible = v; if (!v && mrxw.board) mrxw.board.visible = false; if (!v && mrxw.far) mrxw.far.visible = false; }
+
+/* ---- 衝突 ---- */
+/** MR試験の衝突: 検出した平面 (壁 = 部屋側へ押し戻す / 水平面は下側 = 天井・天板の裏) は MR と同じ。触れたら mrx.hit (判定中は 物件への衝突 = 不)。
+ *  それとは別に 床 (配置した実床)・安全枠 (描いた範囲の外側 3 m × max(縮尺, 0.5)、コース座標系)・天井 (検出した天井 / 無ければ 最大高度 × 縮尺 + 2 m)。 */
+function collideMRX() {
+  const R = C.RADIUS, e = C.RESTITUTION;
+  mrx.hit = false;
+  for (let i = 0; i < planes.length; i++) {
+    const pl = planes[i];
+    if (!pl.valid) continue;
+    if (pl.horiz) {
+      if (pl.y > pos.y && pos.y + C.CEIL_CLEAR > pl.y) {
+        toLocal(pl, pos.x, pl.y, pos.z);
+        if (inRect(pl, 0)) { pos.y = pl.y - C.CEIL_CLEAR; if (vel.y > 0) vel.y *= -e; mrx.hit = true; }
+      }
+      continue;
+    }
+    toLocal(pl, pos.x, pos.y + C.BODY_CENTER, pos.z);
+    if (!inRect(pl, 0)) continue;
+    const sgn = pl.side !== 0 ? pl.side : (_ly >= 0 ? 1 : -1);
+    const d = _ly * sgn;
+    if (d < R && d > -C.WALL_RECOVER) {
+      if (d < -R) sim.holdXZ = false;
+      pos.addScaledVector(pl.n, sgn * (R - d));
+      const vn = vel.dot(pl.n) * sgn;
+      if (vn < 0) vel.addScaledVector(pl.n, -(1 + e) * vn * sgn);
+      mrx.hit = true;
+    }
+  }
+  // 安全枠 (水平): コース座標系で 描いた範囲 (不合格区画の外枠 + 受験者の位置) の外側へ MRX_SAFE_M × max(縮尺, 0.5) [実 m]
+  const s = cf.s, L = exLayout(), f = L.fail, kS = C.MRX_SAFE_M * Math.max(s, C.MRX_SAFE_S_MIN) / s, rc = R / s;
+  exMap();
+  const x0 = f[0] - kS + rc, x1 = f[2] + kS - rc, z0 = f[1] - kS + rc, z1 = L.D + kS - rc;
+  const cx = clamp(cm.x, x0, x1), cz = clamp(cm.z, z0, z1);
+  if (cx !== cm.x || cz !== cm.z) {
+    const dx = cx - cm.x, dz = cz - cm.z;
+    pos.x += s * (dx * cf.c + dz * cf.sn); pos.z += s * (-dx * cf.sn + dz * cf.c);
+    let vx = cm.vx, vz = cm.vz;
+    if (dx > 0 && vx < 0 || dx < 0 && vx > 0) vx *= -e;
+    if (dz > 0 && vz < 0 || dz < 0 && vz > 0) vz *= -e;
+    vel.x = s * (vx * cf.c + vz * cf.sn); vel.z = s * (-vx * cf.sn + vz * cf.c);
+  }
+  const top = room.fromPlanes && room.hasCeil ? room.max.y - C.CEIL_CLEAR : cf.y + (MRX_MAXALT[ex.item] || 3.5) * s + C.MRX_CEIL_EXTRA;
+  if (pos.y > top) { pos.y = top; if (vel.y > 0) vel.y *= -e; }
+  if (pos.y < cf.y) { pos.y = cf.y; if (vel.y < 0) vel.y = 0; vel.x *= 0.96; vel.z *= 0.96; }
+}
+
+/* ---- 入退場 ---- */
+function mrxEnter() {
+  if (ex.item >= EX_NSUBJ) ex.item = 0;                        // フリー練習はない (6科目)
+  cf.on = true; cf.y = room.floorY;
+  mrx.placing = true; mrx.smInit = false; mrx.offX = mrx.offZ = mrx.offYaw = 0; mrx.rsx = mrx.rsy = 0; mrx.grip = false; mrx.hit = false;
+  mrx.rt.t0 = 0; mrx.rt.fired = false; mrx.rt.ok = false; mrx.flick = false; mrx.fitAcc = 1; mrx.fit.sig = -1; mrx.capOn = false;
+  mrxDropAnchor(); mrx.needAnchor = false; mrx.noCtrl = false;
+  mrxSetScale(mrx.si);
+  mrxPlacingUpdate(0);
+  if (!renderer.xr.isPresenting) orbit.r = Math.max(orbit.r, 4 + 14 * cf.s);   // デスクトップ: コース全体が見える距離から
+}
+function mrxAfterEnter() {                                     // exEnter の後
+  mrx.dirty = true; mrxSync(true); mrxApplyDisp();
+  try { mrxFitUpdate(); } catch (e) { /* ignore */ }
+  exNotice('受験者位置に立ち、コース正面を向いて右トリガーで配置');
+}
+function mrxLeave() {
+  cf.on = false; cf.s = 1; mrxPidScale(1);
+  ++mrx.anchorGen; if (mrx.anchor) { try { mrx.anchor.delete(); } catch (e) { /* ignore */ } }
+  mrx.anchor = null; mrx.anchorPend = false; mrx.needAnchor = false; mrx.placing = true; mrx.hit = false; mrx.capOn = false;
+  mrxShow(false);
+}
+
+/* ---- 配置 ---- */
+/** 配置中の毎フレーム: 受験者の印 = 頭の床への投影 + 微調整、コースの向き = 頭の向き + 微調整 (なめらかに追従)。機体は H に置いたまま。 */
+function mrxPlacingUpdate(dt) {
+  // 頭の向き: 足元の印を見下ろしていても狂わないよう、頭の「右」の軸 (うつむき・見上げで変わらない) から取る。首を真横に倒している時だけ前方ベクトルへ戻す
+  tmpV.set(1, 0, 0).applyQuaternion(head.quat);
+  const hx = head.pos.x, hz = head.pos.z, hyaw = tmpV.x * tmpV.x + tmpV.z * tmpV.z > 0.25 ? Math.atan2(-tmpV.z, tmpV.x) : Math.atan2(-head.fwdH.x, -head.fwdH.z);
+  if (dt > 0) {
+    if (mrx.grip) mrx.offYaw -= mrx.rsx * C.MRX_YAW_V * dt;
+    else { mrx.offX += mrx.rsx * C.MRX_OFF_V * dt; mrx.offZ -= mrx.rsy * C.MRX_OFF_V * dt; }
+  }
+  const tyaw = hyaw + mrx.offYaw, c = Math.cos(tyaw), sn = Math.sin(tyaw);
+  const tx = hx + mrx.offX * c + mrx.offZ * sn, tz = hz - mrx.offX * sn + mrx.offZ * c;
+  if (!mrx.smInit) { mrx.mx = tx; mrx.mz = tz; mrx.yaw = tyaw; mrx.smInit = true; }
+  else { const k = dt > 0 ? 1 - Math.exp(-dt / C.MRX_SM_TAU) : 0; mrx.mx += (tx - mrx.mx) * k; mrx.mz += (tz - mrx.mz) * k; mrx.yaw += angleDiff(tyaw, mrx.yaw) * k; }
+  cf.y = room.floorY;
+  mrxApplyMark();
+  mrxPlaceHome();
+}
+function mrxCycleScale(dir) {
+  if (!world.mrx || !mrx.placing) return;
+  mrxSetScale((mrx.si + dir + C.MRX_SCALES.length) % C.MRX_SCALES.length);
+  mrx.dirty = true; mrx.fitAcc = 1; exRestart(); exNotice('縮尺 ' + MRX_SNAME[mrx.si]); exBeep(700, 0.06, 0.1);
+}
+function mrxCycleSubject(dir) {
+  if (!world.mrx || !mrx.placing) return;
+  exSetItem((ex.item + dir + EX_NSUBJ) % EX_NSUBJ);
+}
+/** 科目を変えた (exSetItem から): 配置後は受験者の立ち位置を動かさずに原点を取り直し、アンカーも作り直す。配置中は毎フレーム印から求め直すので何もしない。 */
+function mrxItemChanged(d0) {
+  const k = cf.s * (d0 - exLayout().D);
+  if (!mrx.placing) { mrxSetFrame(cf.ox + k * cf.sn, cf.oz + k * cf.c, cf.yaw); mrxDropAnchor(); mrx.needAnchor = true; }
+  mrx.dirty = true; mrx.fitAcc = 1;
+}
+/** 科目を変えた後 (exSetItem の最後。配置後のみ): 受験者の印を今のコース枠から取り直し (アンカーの補正を反映)、新しい科目の広さを確かめる。収まらなければ警告 (配置はそのまま。赤い外枠を出す)。 */
+function mrxAfterItem() {
+  if (!world.mrx || mrx.placing) return;
+  const D = exLayout().D;
+  mrx.mx = cf.ox + cf.s * D * cf.sn; mrx.mz = cf.oz + cf.s * D * cf.c; mrx.yaw = cf.yaw;
+  try { mrxFitUpdate(); } catch (e) { mrx.fit.lvl = 0; }
+  if (mrx.fit.lvl === 2) exNotice('この科目はここに収まりません（右トリガー長押しで配置し直し）');
+}
+function mrxDropAnchor() { ++mrx.anchorGen; if (mrx.anchor) { try { mrx.anchor.delete(); } catch (e) { /* ignore */ } } mrx.anchor = null; mrx.anchorPend = false; }
+function mrxConfirm() {
+  if (!world.mrx || !mrx.placing) return;
+  mrx.smInit = false; mrxPlacingUpdate(0);                      // 押した瞬間の頭の位置・向きにそのまま合わせる (プレビューのなめらかな追従の遅れを持ち込まない)
+  mrx.placing = false; cf.y = room.floorY; mrxApplyMark();
+  sim.mode = MODE_MANUAL;
+  exResetDrone(); exRestart();
+  mrx.needAnchor = true; mrx.anchorN = 0;
+  if (mrx.capOn) { ex.cap.t = 0; mrx.capOn = false; }
+  exNotice('ここに配置しました（B=モーター始動）'); exBeep(880, 0.1, 0.14);
+}
+/** 配置し直し (右トリガー1秒長押し・モーター停止中 / 空間のリセット)。試行はやり直し。 */
+function mrxReplace(msg) {
+  if (!world.mrx || mrx.placing) return;
+  mrxDropAnchor(); mrx.needAnchor = false;
+  mrx.placing = true; mrx.smInit = false; mrx.offX = mrx.offZ = mrx.offYaw = 0; mrx.fitAcc = 1; mrx.fit.sig = -1; mrx.rt.fired = true;
+  sim.mode = MODE_MANUAL; exResetDrone(); exRestart();
+  if (msg) exNotice(msg);
+}
+/** 基準空間のリセット (リセンター等): アンカーがあればコースは現実の床に付いたまま (次のフレームでアンカーの姿勢から取り直す = 機体ごと動く)。無ければ床の座標が変わったので配置し直し (進行中の試行は採点せずに取り消す)。 */
+function mrxOnReset() { if (world.mrx && !mrx.placing && !mrx.anchor) mrxReplace('空間がリセットされました。もう一度配置してください'); }
+/** 右トリガー (XR) / Enter (デスクトップ): 配置中の押下 = 配置 / 配置後の MRX_HOLD_S 秒長押し (モーター停止・着陸中のみ) = 配置し直し。入った時に押されたままなら離すまで無視。 */
+function mrxRT(pressed) {
+  const r = mrx.rt;
+  if (!world.mrx) { r.t0 = 0; r.fired = false; r.ok = false; return; }
+  if (!r.ok) { if (!pressed) r.ok = true; return; }
+  if (!pressed) { r.t0 = 0; r.fired = false; return; }
+  if (r.fired) return;
+  if (mrx.placing) { r.fired = true; mrxConfirm(); return; }
+  const now = performance.now();
+  if (!r.t0) r.t0 = now;
+  if (now - r.t0 >= C.MRX_HOLD_S * 1000) {
+    r.fired = true;
+    if (sim.state === ST_LANDED && !ex.armed) mrxReplace('再配置します'); else exNotice('再配置は、モーターを止めて着陸している時だけです');
+  }
+}
+/** 左スティックの左右 (配置中): ヒステリシスつきのフリックで科目を前後へ。 */
+function mrxFlick(sx) {
+  if (!world.mrx || !mrx.placing) { mrx.flick = false; return; }
+  const a = Math.abs(sx);
+  if (a < C.MRX_FLICK_OFF) { mrx.flick = true; return; }
+  if (mrx.flick && a > C.MRX_FLICK_ON) { mrx.flick = false; mrxCycleSubject(sx > 0 ? 1 : -1); }
+}
+/** 毎フレーム (物理の前)。 */
+function mrxUpdate(dt) {
+  if (!world.mrx || !cf.on) return;
+  if (mrx.placing) {
+    mrxPlacingUpdate(dt);
+    mrx.fitAcc += dt;
+    if (mrx.fitAcc >= 1 / C.MRX_FIT_HZ) { mrx.fitAcc = 0; try { mrxFitUpdate(); } catch (e) { mrx.fit.lvl = 0; } }
+  }
+  // コントローラーなし (ハンドトラッキングだけ): 配置も操縦もできない。黙って止まらず、字幕とHUDで知らせる (持てばそのまま続けられる)
+  const nc = renderer.xr.isPresenting && !input.hasController && (mrx.placing || sim.state === ST_LANDED);   // (飛行中に見失った時は試験員の字幕を隠さない。機体はその場で静止/惰性のまま = 試験場と同じ)
+  if (nc) { ex.cap.txt = MRX_NOCTRL; ex.cap.t = 1.5; ex.cap.kind = 1; }
+  else if (mrx.noCtrl) { ex.cap.t = 0; mrx.fitAcc = 1; }
+  mrx.noCtrl = nc;
+}
+
+/* ---- アンカー (XR フレームごと) ---- */
+/** コース枠を新しい姿勢 (原点 nx,nz・床の高さ ny・向き nyaw) へ動かす。アンカーの補正 (追跡の修正・再ローカライズ) で呼ぶ。
+ *  方針: 機体はコースと一緒に動かす。位置・速度・向き・ホールドの目標・風の推定・PIDの積分を同じ剛体変換で写すので、コース座標で見た機体の状態 (cm) は連続のまま
+ *  = 判定 (区画・停止・ふらつき・加速度) には何も起きない。現実の床に対しては、コースの絵と機体が一緒に正しい場所へ寄る。 */
+function mrxRotXZ(v, c, sn) { const x = v.x, z = v.z; v.x = x * c + z * sn; v.z = -x * sn + z * c; }
+function mrxMoveFrame(nx, ny, nz, nyaw) {
+  const dyw = angleDiff(nyaw, cf.yaw), ox = cf.ox, oy = cf.y, oz = cf.oz;
+  if (Math.abs(dyw) < 1e-7 && Math.abs(nx - ox) < 1e-6 && Math.abs(nz - oz) < 1e-6 && Math.abs(ny - oy) < 1e-6) return false;
+  const c = Math.cos(dyw), sn = Math.sin(dyw);
+  mrxSetFrame(nx, nz, nyaw); cf.y = ny;
+  pos.x -= ox; pos.z -= oz; mrxRotXZ(pos, c, sn); pos.x += nx; pos.z += nz; pos.y += ny - oy;
+  tgt.x -= ox; tgt.z -= oz; mrxRotXZ(tgt, c, sn); tgt.x += nx; tgt.z += nz; tgt.y += ny - oy;
+  mrxRotXZ(vel, c, sn); mrxRotXZ(ex.w, c, sn); mrxRotXZ(ex.wEst, c, sn); mrxRotXZ(ex.wDot, c, sn); mrxRotXZ(ex.wFf, c, sn);
+  let ix = pidPx.i, iz = pidPz.i; pidPx.i = ix * c + iz * sn; pidPz.i = -ix * sn + iz * c;
+  ix = pidVx.i; iz = pidVz.i; pidVx.i = ix * c + iz * sn; pidVz.i = -ix * sn + iz * c;
+  sim.yaw = angleDiff(sim.yaw + dyw, 0);
+  world.home.set(cf.ox, cf.y, cf.oz); sim.groundY = cf.y;
+  if (sim.state === ST_LANDED) { pos.y = cf.y; buildQuat(quat, sim.yaw, 0, 0); }   // 地上の機体も同じ変換で付いてくる (H 以外に降りていても、その場所のまま)
+  return true;
+}
+/** このセッションでアンカーが使えるか (許可された機能の一覧が読める環境では 'anchors' が入っている時だけ)。 */
+function mrxAnchorsOn(frame) {
+  if (typeof frame.createAnchor !== 'function') return false;
+  const ef = xrSession && xrSession.enabledFeatures;
+  return !ef || typeof ef.includes !== 'function' || ef.includes('anchors');
+}
+function mrxXrFrame(frame, ref) {
+  if (!world.mrx || mrx.placing) return;
+  if (mrx.needAnchor && !mrx.anchorPend) {
+    mrx.needAnchor = false;
+    if (!mrx.anchorFail && mrxAnchorsOn(frame)) {
+      // 作成はこの rAF コールバックの中 (frame が有効な間) に行う。結果は後で届くが、その時に frame には触れない (届いた次のフレームから姿勢を読む)。
+      mrx.anchorPend = true;
+      const gen = ++mrx.anchorGen, h = Math.sin(cf.yaw / 2), w = Math.cos(cf.yaw / 2), p = { x: cf.ox, y: cf.y, z: cf.oz }, q = { x: 0, y: h, z: 0, w };   // 床の上のコース原点・向き = Ry(yaw)
+      const bad = () => { if (gen === mrx.anchorGen) { mrx.anchorPend = false; if (++mrx.anchorFailN >= 3) mrx.anchorFail = true; } };   // 拒否: 黙って固定のまま (次の配置でもう一度だけ試す。3回続けば以後は試さない)
+      try {
+        const pr = frame.createAnchor(typeof XRRigidTransform === 'function' ? new XRRigidTransform(p, q) : { position: p, orientation: q }, ref);
+        if (pr && typeof pr.then === 'function') {
+          pr.then((a) => {
+            if (!a || gen !== mrx.anchorGen || !world.mrx || mrx.placing) { try { a.delete(); } catch (e) { /* ignore */ } return; }   // 古い依頼 (配置し直し・退出の後に届いた): すぐ捨てる
+            mrx.anchorPend = false; mrx.anchor = a; mrx.anchorN++;
+          }, bad);
+        } else bad();
+      } catch (e) { bad(); }
+    }
+  }
+  const a = mrx.anchor;
+  if (a) {
+    let pose = null;
+    try {
+      const ta = frame.trackedAnchors;
+      if (ta && typeof ta.has === 'function' && !ta.has(a)) return;   // このフレームでは追跡されていない: 最後の姿勢のまま
+      pose = frame.getPose(a.anchorSpace, ref);
+    } catch (e) { pose = null; }
+    if (!pose || pose.emulatedPosition) return;                 // 追跡を見失った / 位置が推定値: 最後の姿勢のまま
+    const t = pose.transform, q = t.orientation, p = t.position;
+    const yaw = Math.atan2(2 * (q.x * q.z + q.w * q.y), 1 - 2 * (q.x * q.x + q.y * q.y));   // アンカーの +Z 軸の水平成分の向き (アンカーが少し傾いていても、床の上の向きだけを取る)
+    if (!(Number.isFinite(yaw) && Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z))) return;
+    mrx.anchorUpd++;
+    if (mrxMoveFrame(p.x, p.y, p.z, yaw)) mrx.anchorJump++;
+  }
+}
+
+/* ---- 広さの確認 ---- */
+const fcx = new Float64Array(4), fcz = new Float64Array(4), pqx = new Float64Array(4), pqz = new Float64Array(4), _fl = new Float64Array(12);
+const _fs = new Float64Array(4);                              // 作業用 [天井の高さ (NaN = 無し), 壁の枚数, Liang–Barsky の t0, t1] (モジュール変数の実数は代入のたびに確保が起きるので配列に置く)
+_fs[0] = NaN; _fs[3] = 1;
+/** 足元の四隅 (実座標 x,z): コースの不合格区画の外枠 + 受験者の立ち位置までの長方形を、受験者の印・向きを動かさずに縮尺 s で貼ったもの。 */
+function mrxCorners(s) {
+  const L = exLayout(), f = L.fail, D = L.D, c = Math.cos(mrx.yaw), sn = Math.sin(mrx.yaw), ox = mrx.mx - s * D * sn, oz = mrx.mz - s * D * c;
+  for (let i = 0; i < 4; i++) {
+    const x = (i === 1 || i === 2) ? f[2] : f[0], z = i >= 2 ? D : f[1];
+    fcx[i] = ox + s * (x * c + z * sn); fcz[i] = oz + s * (-x * sn + z * c);
+  }
+}
+function lbClip(p, q) {                                        // Liang–Barsky の1辺
+  if (p === 0) return q >= 0;
+  const r = q / p;
+  if (p < 0) { if (r > _fs[3]) return false; if (r > _fs[2]) _fs[2] = r; } else { if (r < _fs[2]) return false; if (r < _fs[3]) _fs[3] = r; }
+  return true;
+}
+function segHitsRect(ax, az, bx, bz, x0, z0, x1, z1) {
+  _fs[2] = 0; _fs[3] = 1; const dx = bx - ax, dz = bz - az;
+  return lbClip(-dx, ax - x0) && lbClip(dx, x1 - ax) && lbClip(-dz, az - z0) && lbClip(dz, z1 - az);
+}
+function satQuads() {                                          // fcx/fcz と pqx/pqz (どちらも凸四角形) が重なるか (分離軸)
+  for (let pass = 0; pass < 2; pass++) {
+    const ax = pass ? pqx : fcx, az = pass ? pqz : fcz, bx = pass ? fcx : pqx, bz = pass ? fcz : pqz;
+    for (let i = 0; i < 4; i++) {
+      const j = (i + 1) & 3, nx = az[i] - az[j], nz = ax[j] - ax[i];
+      let a0 = 1e30, a1 = -1e30, b0 = 1e30, b1 = -1e30;
+      for (let k = 0; k < 4; k++) { const pa = ax[k] * nx + az[k] * nz, pb = bx[k] * nx + bz[k] * nz; if (pa < a0) a0 = pa; if (pa > a1) a1 = pa; if (pb < b0) b0 = pb; if (pb > b1) b1 = pb; }
+      if (a1 < b0 || b1 < a0) return false;
+    }
+  }
+  return true;
+}
+/** 縮尺 s で貼った時の重なり: bit0 = 壁 (垂直な平面) が足元を横切る / bit1 = 床上 0.3〜2.2 m の水平面 (テーブル等) が重なる。天井の高さは _fs[0] (m、床から。無ければ NaN)。 */
+function mrxFitEval(s) {
+  mrxCorners(s);
+  const fy = room.floorY, y0 = fy + 1.0;
+  let bits = 0, cOver = 1e9, cAny = 1e9;
+  _fs[1] = 0;
+  for (let i = 0; i < planes.length; i++) {
+    const pl = planes[i];
+    if (!pl.valid) continue;
+    if (!pl.horiz) {
+      _fs[1]++;
+      for (let k = 0; k < 4; k++) { toLocal(pl, fcx[k], y0, fcz[k]); _fl[k * 3] = _lx; _fl[k * 3 + 1] = _ly; _fl[k * 3 + 2] = _lz; }
+      let np = 0, ax = 0, az = 0, bx = 0, bz = 0;
+      for (let k = 0; k < 4; k++) {
+        const j = (k + 1) & 3, y1 = _fl[k * 3 + 1], y2 = _fl[j * 3 + 1];
+        if ((y1 <= 0) !== (y2 <= 0)) {
+          const t = y1 / (y1 - y2), px = _fl[k * 3] + (_fl[j * 3] - _fl[k * 3]) * t, pz = _fl[k * 3 + 2] + (_fl[j * 3 + 2] - _fl[k * 3 + 2]) * t;
+          if (np === 0) { ax = px; az = pz; np = 1; } else if (np === 1) { bx = px; bz = pz; np = 2; }
+        }
+      }
+      if (np === 2 && segHitsRect(ax, az, bx, bz, pl.minX - 0.05, pl.minZ - 0.05, pl.maxX + 0.05, pl.maxZ + 0.05)) bits |= 1;
+    } else {
+      const h = pl.y - fy;
+      if (h < 0.3) continue;                                    // 床
+      for (let k = 0; k < 4; k++) { tmpV.set((k & 1) ? pl.maxX : pl.minX, 0, (k & 2) ? pl.maxZ : pl.minZ).applyMatrix4(pl.m); pqx[k === 3 ? 2 : k === 2 ? 3 : k] = tmpV.x; pqz[k === 3 ? 2 : k === 2 ? 3 : k] = tmpV.z; }   // 四隅を周回順に
+      const over = satQuads();
+      if (h <= 2.2) { if (over) bits |= 2; }
+      else { if (h < cAny) cAny = h; if (over && h < cOver) cOver = h; }
+    }
+  }
+  _fs[0] = cOver < 1e8 ? cOver : cAny < 1e8 ? cAny : NaN;
+  return bits;
+}
+function mrxFitUpdate() {
+  const F = mrx.fit, s = cf.s, it = ex.item, L = exLayout();
+  const bits = mrxFitEval(s), ceilH = _fs[0], need = (MRX_MAXALT[it] || 3.5) * s + C.MRX_CEIL_NEED;
+  const lowCeil = ceilH === ceilH && ceilH < need, red = (bits & 3) !== 0 || lowCeil;
+  F.planes = planes.length; F.wall = (bits & 1) !== 0; F.obs = (bits & 2) !== 0; F.ceil = ceilH; F.need = need;
+  F.walls = _fs[1]; F.lvl = red ? 2 : _fs[1] === 0 ? 1 : 0;   // 壁が1枚も見つかっていない (平面なし / 床だけ) = 琥珀
+  mrx.fitN++;
+  F.w = (L.fail[2] - L.fail[0]) * s; F.d = (L.D - L.fail[1]) * s;
+  let sug = -1;
+  if (red) for (let k = mrx.si + 1; k < C.MRX_SCALES.length && sug < 0; k++) {
+    const sk = C.MRX_SCALES[k], b2 = mrxFitEval(sk), c2 = _fs[0];
+    if ((b2 & 3) === 0 && !(c2 === c2 && c2 < (MRX_MAXALT[it] || 3.5) * sk + C.MRX_CEIL_NEED)) sug = k;
+  }
+  F.sug = sug;
+  const sig = ((((it * 4 + mrx.si) * 4 + F.lvl) * 4 + (bits & 3)) * 16 + (lowCeil ? 1 : 0) + 2 * (sug + 1)) * 1000 + (ceilH === ceilH ? Math.round(ceilH * 10) + 1 : 0);
+  if (sig !== F.sig) {                                          // 文面は変わった時だけ作り直す
+    F.sig = sig;
+    F.foot = '必要な広さ 幅' + F.w.toFixed(1) + 'm×奥行' + F.d.toFixed(1) + 'm';
+    F.msg1 = F.msg2 = F.sugTxt = '';
+    if (red) {
+      const a = (bits & 3) !== 0 ? '障害物と重なっています' : '', b = lowCeil ? '天井が低すぎます（必要 ' + need.toFixed(1) + 'm／検出 ' + ceilH.toFixed(1) + 'm）' : '';
+      F.msg1 = a || b; F.msg2 = a ? b : '';
+      F.sugTxt = sug >= 0 ? '縮尺 ' + MRX_SNAME[sug] + ' なら収まります' : 'この場所には収まりません（縮尺 1/3 でも重なります）';
+    } else if (F.lvl === 1) F.msg1 = '壁を認識していません。広さは自分で確認してください';
+    else F.msg1 = '周囲に障害物は見つかりません';
+    mrx.dirty = true;
+  }
+  if (mrxw.outline) { const col = F.lvl === 2 ? 0xd8392b : F.lvl === 1 ? 0xe7a21a : 0xffffff; if (col !== mrxw.outCol) { mrxw.outCol = col; mrxw.outline.material.color.setHex(col); } }
+  if (F.lvl >= (mrx.placing ? 1 : 2)) { ex.cap.txt = F.msg1 + (F.msg2 ? '　' + F.msg2 : '') + (F.sugTxt && F.lvl === 2 ? '　' + F.sugTxt : ''); ex.cap.t = 3.5; ex.cap.kind = 1; mrx.capOn = true; }
+  else if (mrx.capOn) { ex.cap.t = 0; mrx.capOn = false; }
+}
+
+/* ---- 床のコース ---- */
+function mrxBuild() {
+  if (mrxw.built) return;
+  const t0 = performance.now();
+  exAtlasBuild();
+  const mkPaint = (alpha) => new THREE.MeshBasicMaterial({ vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2, ...(alpha ? { transparent: true, depthWrite: false } : {}) });
+  const emptyGeo = () => { const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9), 3)); return g; };
+  const paint = new THREE.Mesh(emptyGeo(), mkPaint(false)); paint.name = 'mrxPaint';
+  // 線の暗い縁取り: 明るい床 (白い床・木目) の上でも白・黄の線が沈まないよう、各線の両側 2 cm (実寸) に半透明の暗い帯を敷く (本番表示でも出す = 線そのものの見やすさ)
+  const casing = new THREE.Mesh(emptyGeo(), new THREE.MeshBasicMaterial({ color: 0x10161c, transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1.5, polygonOffsetUnits: -1.5 })); casing.name = 'mrxCasing'; casing.renderOrder = 2;
+  const penM = mkPaint(true); penM.map = exHatchTex(); penM.polygonOffsetFactor = -1; penM.polygonOffsetUnits = -1;
+  const penZ = new THREE.Mesh(emptyGeo(), penM); penZ.name = 'mrxZonePen'; penZ.renderOrder = 1; penZ.userData.aid = true;
+  const failM = mkPaint(true); failM.polygonOffsetFactor = -1; failM.polygonOffsetUnits = -1;
+  const failZ = new THREE.Mesh(emptyGeo(), failM); failZ.name = 'mrxZoneFail'; failZ.renderOrder = 1; failZ.userData.aid = true;
+  const mkI = (geo, n) => { const m = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }), n); m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.DynamicDrawUsage); m.count = 0; return m; };
+  const cones = mkI(exConeGeo(), 192); cones.name = 'mrxCones';
+  const pylons = mkI(exPylonGeo(), 48); pylons.name = 'mrxPylons';
+  const poles = mkI(exPoleGeo(), 192); poles.name = 'mrxPoles'; poles.userData.aid = true;
+  const labels = new THREE.Mesh(emptyGeo(), new THREE.MeshBasicMaterial({ map: EX_ATL.tex, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 })); labels.name = 'mrxLabels';
+  const props = new THREE.Mesh(emptyGeo(), new THREE.MeshLambertMaterial({ vertexColors: true })); props.name = 'mrxProps';
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.62, 56).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0xffe14a, transparent: true, opacity: 0.9, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+  ring.name = 'mrxTarget'; ring.userData.aid = true; ring.visible = false;
+  const dot = new THREE.Mesh(new THREE.CircleGeometry(0.09, 20).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: 0x55f0ff, transparent: true, opacity: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -5, polygonOffsetUnits: -5 }));
+  dot.name = 'mrxShadowDot'; dot.userData.aid = true; dot.visible = false;
+  const outline = new THREE.Mesh(emptyGeo(), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 })); outline.name = 'mrxOutline';
+  // 遠くの機体の輪 (補助表示のみ): 実寸 30 cm の機体は 8 m 先で約 2°。見失わないよう、目から 7 m を超えたら機体を囲む細い輪を常にこちら向きで出す (見かけの大きさ一定。本番表示では出さない)
+  const far = new THREE.Mesh(new THREE.RingGeometry(0.86, 1, 40), new THREE.MeshBasicMaterial({ color: 0x55f0ff, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false, toneMapped: false }));
+  far.name = 'mrxFarRing'; far.userData.aid = true; far.visible = false; far.frustumCulled = false; far.renderOrder = 5; scene.add(far);
+  const farB = new THREE.Mesh(new THREE.RingGeometry(0.8, 1.06, 40), new THREE.MeshBasicMaterial({ color: 0x06202a, transparent: true, opacity: 0, depthTest: false, depthWrite: false, fog: false, toneMapped: false }));   // 明るい壁の前でも輪が見えるよう、暗い下地を重ねる
+  farB.name = 'mrxFarRingBack'; farB.frustumCulled = false; farB.renderOrder = 4; far.add(farB); far.userData.back = farB;
+  const group = new THREE.Group(); group.name = 'mrxWorld';
+  group.add(paint, casing, penZ, failZ, labels, cones, pylons, poles, props, ring, dot, outline);
+  for (const m of group.children) m.frustumCulled = false;
+  group.visible = false; scene.add(group);
+  const bcv = document.createElement('canvas'); bcv.width = EX_BW; bcv.height = EX_BH;
+  const btex = new THREE.CanvasTexture(bcv); btex.colorSpace = THREE.SRGBColorSpace; btex.generateMipmaps = false; btex.minFilter = THREE.LinearFilter;
+  const board = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.5 * EX_BH / EX_BW), new THREE.MeshBasicMaterial({ map: btex, fog: false, side: THREE.DoubleSide })); board.name = 'mrxBoard'; board.frustumCulled = false; board.visible = false; board.userData.aid = true;
+  scene.add(board);
+  Object.assign(mrxw, { built: true, group, paint, casing, penZ, failZ, labels, cones, pylons, poles, props, tgt: ring, dot, outline, board, far, boardCv: bcv, boardTex: btex, key: -1 });
+  mrxw.buildMs = performance.now() - t0;
+}
+/** 科目か縮尺が変わった時だけ、コースの形 (コース座標) を作り直す。 */
+function mrxSync(force) {
+  if (!mrxw.built) return;
+  const key = ex.item * 8 + mrx.si;
+  if (!force && !mrx.dirty && mrxw.key === key) return;
+  const t0 = performance.now(), s = cf.s, kk = Math.max(s, C.MRX_CONE_S_MIN) / s, rebuild = force || mrxw.key !== key;
+  mrx.dirty = false;
+  if (rebuild) {
+    mrxw.key = key; mrxw.kk = kk;
+    const X = { mrx: true, k: kk, py: C.MRX_Y_PAINT / s, zy: C.MRX_Y_ZONE / s, paint: exBuf(false, false), penZ: exBuf(true, true), failZ: exBuf(false, true), cones: [], pylons: [], poles: [], stakes: [], signs: [], flat: [], figs: [], stands: [], socks: [] };
+    let rec; exLwMin = 0.03 / s; try { rec = exCellBuild(X, 0, ex.item); } finally { exLwMin = 0; } mrx.rec = rec;   // 線は実寸 3 cm 以上 (縮尺 1/3 でも床の上で見える太さ)
+    exDisp(mrxw.paint, exBufGeo(X.paint)); exDisp(mrxw.penZ, exBufGeo(X.penZ)); exDisp(mrxw.failZ, exBufGeo(X.failZ));
+    { const XC = { mrx: true, k: kk, py: C.MRX_Y_CASE / s, zy: C.MRX_Y_ZONE / s, paint: exBuf(false, false), penZ: exBuf(true, true), failZ: exBuf(false, true), cones: [], pylons: [], poles: [], stakes: [], signs: [], flat: [], figs: [], stands: [], socks: [] };
+      exLwMin = 0.03 / s; exLwAdd = C.MRX_CASE_W / s; try { exCellBuild(XC, 0, ex.item); } finally { exLwMin = 0; exLwAdd = 0; }
+      exDisp(mrxw.casing, exBufGeo(XC.paint)); }
+    const inst = (mesh, arr, cap, k) => { let n = 0; for (let i = 0; i + 1 < arr.length && n < cap; i += 2, n++) { _mrM.compose(_mrP.set(arr[i], 0, arr[i + 1]), MRX_QI, _mrS.set(k, k, k)); mesh.setMatrixAt(n, _mrM); } mesh.count = n; mesh.instanceMatrix.needsUpdate = true; return n; };
+    inst(mrxw.cones, X.cones, 192, kk); inst(mrxw.pylons, X.pylons, 48, Math.min(kk, C.MRX_PYLON_K_MAX));   // 円の中心のパイロンは 1.3 倍まで (高度 1.5 m の機体が真上を通っても、絵の上でも当たらない高さ) inst(mrxw.poles, X.poles, 192, 1);
+    const LB = { p: [], u: [] }, ly = C.MRX_Y_LABEL / s;
+    const quadV = (x, y, z, ux, h, uv) => { const hw = ux / 2; LB.p.push(x - hw, y, z, x + hw, y, z, x + hw, y + h, z, x - hw, y, z, x + hw, y + h, z, x - hw, y + h, z); LB.u.push(uv[0], uv[1], uv[2], uv[1], uv[2], uv[3], uv[0], uv[1], uv[2], uv[3], uv[0], uv[3]); };
+    for (let i = 0; i + 5 < X.signs.length; i += 6) quadV(X.signs[i], X.signs[i + 1], X.signs[i + 2], X.signs[i + 3], X.signs[i + 4], X.signs[i + 5]);
+    for (let i = 0; i + 4 < X.flat.length; i += 5) {
+      const cx = X.flat[i], cz = X.flat[i + 1], w = X.flat[i + 2], d = X.flat[i + 3], uv = X.flat[i + 4];
+      LB.p.push(cx - w / 2, ly, cz + d / 2, cx + w / 2, ly, cz + d / 2, cx + w / 2, ly, cz - d / 2, cx - w / 2, ly, cz + d / 2, cx + w / 2, ly, cz - d / 2, cx - w / 2, ly, cz - d / 2);
+      LB.u.push(uv[0], uv[1], uv[2], uv[1], uv[2], uv[3], uv[0], uv[1], uv[2], uv[3], uv[0], uv[3]);
+    }
+    const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(LB.p), 3)); lg.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(LB.u), 2)); lg.computeBoundingSphere();
+    exDisp(mrxw.labels, lg);
+    const PR = [];
+    for (let i = 0; i + 1 < X.stakes.length; i += 2) PR.push(vrPaint(vrAt(new THREE.BoxGeometry(0.04 * kk, 0.46 * kk, 0.04 * kk), X.stakes[i], 0.23 * kk, X.stakes[i + 1]), 0x555a60, 0.05));
+    if (PR.length) exDisp(mrxw.props, mergeGeos(PR)); else { mrxw.props.userData.has = false; mrxw.props.visible = false; }
+    // 外枠 (足元): 不合格区画の外枠 + 受験者の立ち位置までの長方形。白 / 琥珀 / 赤 (広さの確認の結果)
+    const L = exLayout(), OB = exBuf(false, false);
+    exRectLine(OB, [L.fail[0], L.fail[1], L.fail[2], L.D], 0.1, C.MRX_Y_OUT / s, [1, 1, 1, 1]);
+    exDisp(mrxw.outline, exBufGeo(OB));
+    mrxw.syncN++;
+  }
+  mrxApplyDisp();
+  mrxw.syncMs = performance.now() - t0;
+}
+/** 補助表示 (区画の塗り・高度のポール・目標の輪・影の点・小さな掲示板) の表示/非表示。 */
+function mrxApplyDisp() {
+  if (!mrxw.built) return;
+  const on = ex.disp === 1;
+  mrxw.penZ.visible = on && !!mrxw.penZ.userData.has; mrxw.failZ.visible = on && !!mrxw.failZ.userData.has; mrxw.poles.visible = on && mrxw.poles.count > 0;
+  if (!on) { mrxw.tgt.visible = false; mrxw.dot.visible = false; mrxw.board.visible = false; mrxw.far.visible = false; }
+}
+/** 毎フレーム (MR試験): コース枠を群へ・形の更新・補助表示 (目標の輪・影の点・小さな掲示板)・字幕。 */
+function mrxFrame(dt, now) {
+  void now;
+  if (!mrxw.built || !cf.on) return;
+  const g = mrxw.group;
+  g.position.set(cf.ox, cf.y, cf.oz); g.rotation.set(0, cf.yaw, 0); g.scale.setScalar(cf.s);
+  mrxSync(false);
+  mrxw.outline.visible = (mrx.placing || (mrx.fit.lvl === 2 && sim.state === ST_LANDED && !ex.armed)) && !!mrxw.outline.userData.has;   // 配置中 / 配置後でも収まっていない間 (着陸・停止中) は赤い外枠を残す
+  const S = ex.step, s = cf.s, ya = C.MRX_Y_AID / s, tg = mrxw.tgt, dot = mrxw.dot, aid = ex.disp === 1 && !spec.on && !mrx.placing;
+  if (aid && !ex.free && S && ex.res === 0) {
+    let tx = 0, tz = 0, r = 1.12;
+    if (S.k === 'goto' && !S.toH && !S.settle) { tx = S.tx; tz = S.tz; r = 0.62; }
+    else if (S.k === 'circ') { tx = S.cx; tz = S.cz; r = 2.5; }
+    tg.position.set(tx, ya, tz); tg.scale.setScalar(r / 0.56); tg.material.opacity = 0.6 + 0.3 * Math.sin(performance.now() * 0.006); tg.visible = true;
+  } else tg.visible = false;
+  if (aid && sim.state === ST_FLYING) { dot.position.set(cm.x, ya, cm.z); dot.scale.setScalar((1 + cm.y * 0.3) / s); dot.visible = true; } else dot.visible = false;
+  const fr = mrxw.far; let frOn = false;
+  if (aid && sim.state === ST_FLYING) {
+    const xrOn = renderer.xr.isPresenting, ep = xrOn ? head.pos : camera.position, dd = Math.hypot(drone.position.x - ep.x, drone.position.y - ep.y, drone.position.z - ep.z);
+    if (dd > C.MRX_FAR_M) { fr.position.copy(drone.position); fr.quaternion.copy(xrOn ? head.quat : camera.quaternion); fr.scale.setScalar(dd * C.MRX_FAR_ANG); fr.material.opacity = 0.85 * clamp((dd - C.MRX_FAR_M) / 1.5, 0, 1); fr.userData.back.material.opacity = 0.65 * fr.material.opacity; frOn = true; }
+  }
+  fr.visible = frOn;
+  // 小さな掲示板 (補助表示のみ): 受験者の右 1.2 m・目の高さの少し下。結果は HUD にも必ず出る
+  const bd = mrxw.board;
+  if (aid) {
+    const L = exLayout(), mxw = cf.ox + s * L.D * cf.sn, mzw = cf.oz + s * L.D * cf.c;
+    bd.position.set(mxw + C.MRX_BOARD_X * cf.c, cf.y + 1.15, mzw - C.MRX_BOARD_X * cf.sn);
+    bd.rotation.set(0, Math.atan2(head.pos.x - bd.position.x, head.pos.z - bd.position.z), 0);
+    bd.visible = true;
+    mrx.bAcc += dt;
+    if (mrx.bAcc >= 0.25) {
+      mrx.bAcc = 0;
+      const v = exBoardData(), sig = v.item + '|' + v.wind + '|' + v.txt + '|' + v.sub + '|' + v.score + '|' + Math.ceil(v.rem) + '|' + v.hold + '|' + v.res + '|' + v.demo + '|' + v.nfault + '|' + v.run + '|' + v.best;
+      if (sig !== mrx.bSig) { mrx.bSig = sig; exBoardDraw(0, v, mrxw.boardCv, mrxw.boardTex); }
+    }
+  } else bd.visible = false;
+  exCapUpdate();
+}
+
+/* ---- HUD ---- */
+function mrxHudSig() { return (mrx.placing ? 1 : 0) + 2 * mrx.si + (mrx.noCtrl ? 8 : 0) + 16 * mrx.fit.sig; }
+/** 配置中のHUD (512x256)。上のバッジ・科目名は exDrawHud が描いたあと。 */
+function mrxDrawHudPlacing(x) {
+  const F = mrx.fit, W = 476, it = EX_ITEMS[ex.item];
+  x.textBaseline = 'top'; x.textAlign = 'left';
+  if (mrx.noCtrl) { x.fillStyle = '#ff9a7a'; fitText(x, MRX_NOCTRL, 18, 38, W, 19, 10, true); }
+  else { x.fillStyle = '#ffee66'; fitText(x, '受験者位置に立ち、コース正面を向いて右トリガーで配置', 18, 38, W, 19, 10, true); }
+  x.fillStyle = '#b8c6d6'; fitText(x, 'Y=縮尺　左スティック左右=科目　右スティック=位置調整（右グリップ+左右=向き）', 18, 64, W, 15, 8, false);
+  x.fillStyle = '#ffffff'; fitText(x, '縮尺 ' + MRX_SNAME[mrx.si] + '　' + it.name, 18, 88, W, 21, 11, true);
+  x.fillStyle = '#e8eef5'; fitText(x, F.foot + (F.need > 0 ? '　天井 ' + F.need.toFixed(1) + 'm以上' : ''), 18, 116, W, 20, 11, true);
+  x.fillStyle = F.lvl === 2 ? '#ff8a7a' : F.lvl === 1 ? '#ffd479' : '#8dffd8'; fitText(x, F.msg1, 18, 142, W, 19, 10, true);
+  if (F.msg2) fitText(x, F.msg2, 18, 164, W, 19, 10, true);
+  if (F.sugTxt && F.lvl === 2) { x.fillStyle = '#ffd479'; fitText(x, F.sugTxt, 18, 188, W, 18, 10, true); }
+  if (ex.noticeT > 0 && ex.notice) { x.fillStyle = '#ffb14a'; fitText(x, ex.notice, 18, 212, W, 17, 10, true); }
+  x.fillStyle = '#8fa3b8'; fitText(x, '左スティック押込み=スペース設定　X=HUD　右スティック長押し=ワールド', 18, 234, W, 14, 9, false);
+}
+/** 飛行中の高度の補足 (実寸 → 本番換算) と縮尺。 */
+const mrxAltText = (altReal) => (cf.s === 1 ? '原寸 1/1（実寸のまま）' : '本番換算　縮尺 ' + MRX_SNAME[mrx.si] + '（実寸 ' + altReal.toFixed(2) + ' m）');
+
+/* =====================================================================
  * 16. 入力 (XRコントローラー / キーボード)
  * ===================================================================== */
 function shape(v) {
@@ -4051,7 +4639,7 @@ function shapeYaw(v) {
 /** Questのスペース設定を起動 (1セッションに1回まで)。未対応・拒否は無視 */
 let roomCaptureAsked = false;
 function startRoomCapture(session) {
-  if (world.vr || fade.phase !== 0) return;                  // VR中・切替の暗転中は絶対に起動しない (周囲が見えない状態でシステムUIを出さない)
+  if ((world.vr && !world.mrx) || fade.phase !== 0) return;   // VR中 (MR試験は除く: パススルーのまま)・切替の暗転中は絶対に起動しない (周囲が見えない状態でシステムUIを出さない)
   if (roomCaptureAsked || !session || typeof session.initiateRoomCapture !== 'function') return;
   roomCaptureAsked = true;
   try { const p = session.initiateRoomCapture(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* 無視 */ }
@@ -4071,32 +4659,36 @@ function readXRInputs(session, xrFrame, ref) {
     const sx = ax.length >= 4 ? ax[2] : (ax[0] || 0), sy = ax.length >= 4 ? ax[3] : (ax[1] || 0);
     if (s.handedness === 'left') {
       gotL = true; input.lx = world.ex ? shapeYaw(sx) : shape(sx); if (stickMode === 1) input.ry = shape(-sy); else input.ly = shape(-sy);   // 上=上昇(モード2)/前進(モード1), 右=右旋回
+      mrxFlick(world.mrx ? sx : 0);                                // MR試験の配置中: 左スティック左右のフリック = 科目
       if (edge('X', !!(b[4] && b[4].pressed))) toggleHud();
       const lt = !!(b[0] && b[0].pressed);
       if (world.ex) { prevBtn.L = lt; exLTrig(lt); }               // 試験場: 左トリガー 短押し = 本番/補助表示、1 秒長押し = やり直し
       else { exLTrig(false); if (edge('L', lt)) { if (!world.vr) toggleMonitor(); else natToggleAtti(); } }   // 左トリガー = MR: ドローン視点モニター / 自然: 位置安定 ON/OFF (短押し)
       if (edge('LS', !!(b[3] && b[3].pressed))) {                // 左スティック押込み: VR=一人称/三人称の切替 / MR=スペース設定 (平面が無い時のみ)
         if (fade.phase !== 0) { /* 切替の暗転中の押下は捨てる (同じ押下が切替後の世界の意味で働かないように) */ }
-        else if (world.vr) vrRequestCam(); else if (planes.length === 0) startRoomCapture(session);
+        else if (world.vr && !world.mrx) vrRequestCam(); else if (planes.length === 0) startRoomCapture(session);   // MR試験の左スティック押込みはMRと同じ (スペース設定)
       }
       const yp = !!(b[5] && b[5].pressed);
-      exYBtn(yp);                                                 // 試験場: 左Y = 科目の切替 (着陸して停止中のみ) / フリー練習では 1 秒長押し = 位置安定 ON/OFF。他のワールドでは何もしない
+      if (world.mrx && mrx.placing) { exY.ok = false; exY.t0 = 0; exY.fired = false; if (edge('Y', yp)) mrxCycleScale(1); }   // MR試験の配置中: Y = 縮尺 (配置後は科目)
+      else exYBtn(yp);                                            // 試験場: 左Y = 科目の切替 (着陸して停止中のみ) / フリー練習では 1 秒長押し = 位置安定 ON/OFF。他のワールドでは何もしない
       if (world.ex) prevBtn.Y = yp;                               // (MRへ戻った時に、押したままのYが位置合わせの開始にならないよう状態だけ追う)
       else if (world.vr) { if (edge('Y', yp)) natCycleWind(); }   // 自然: 左Y = 風の強さ (無風→弱→中)。ルーム参加中でも VR は位置合わせ不要なので競合しない
       else if (net.on && net.role === 'pilot') netLeftY(yp);      // 左Y = 位置合わせの開始/中止・長押しで手動解除 (ルーム参加時のMRのみ。VRは位置合わせ不要)
       else prevBtn.Y = yp;                                        // MR (ソロ): 何もしない。状態だけ追う (押したまま自然へ入った時に、その押下で風の強さが変わらないように)
     } else if (s.handedness === 'right') {
       gotR = true; input.rx = shape(sx); if (stickMode === 1) input.ly = shape(-sy); else input.ry = shape(-sy);   // 前=前進(モード2)/上昇(モード1), 右=右移動
+      if (world.mrx) { mrx.rsx = shape(sx); mrx.rsy = shape(-sy); mrx.grip = !!(b[1] && b[1].pressed); }   // MR試験の配置: 右スティック = 位置の微調整 / 右グリップを押しながら左右 = 向き
       if (edge('A', !!(b[4] && b[4].pressed))) toggleMode();
       if (edge('B', !!(b[5] && b[5].pressed))) toggleFlight();
       input.recall = !!(b[0] && b[0].pressed);
+      mrxRT(input.recall);                                        // MR試験: 配置 / 1秒長押しで配置し直し
       void prevBtn.RTx;                                           // 試験場の右トリガーは何もしない (呼び戻しも無い)
       vrHoldUpdate(!!(b[3] && b[3].pressed));                    // 右スティック押込みを VR_HOLD_S 秒長押し = MR ⇄ VR (誤操作防止の長押し)
       if (net.on && net.role === 'pilot') { if (world.vr) prevBtn.RT = input.recall; else netRightController(s, b, xrFrame, ref); }   // 位置合わせ中は呼び戻しを抑止し、トリガーで点を記録 (MRのみ)
     }
   }
   if (!gotL) { prevBtn.X = false; prevBtn.L = false; prevBtn.Y = false; prevBtn.LS = false; exYBtn(false); exLTrig(false); }
-  if (!gotR) { prevBtn.A = false; prevBtn.B = false; prevBtn.RT = false; prevBtn.RTx = false; vrHoldUpdate(false); }
+  if (!gotR) { prevBtn.A = false; prevBtn.B = false; prevBtn.RT = false; prevBtn.RTx = false; vrHoldUpdate(false); mrxRT(false); mrx.rsx = mrx.rsy = 0; mrx.grip = false; }
   input.hasController = gotL || gotR;
 }
 
@@ -4112,12 +4704,17 @@ window.addEventListener('keydown', (e) => {
   else if (e.code === 'KeyT') toggleFlight();
   else if (e.code === 'KeyH') toggleHud();
   else if (e.code === 'KeyV') { if (!world.vr) toggleMonitor(); }
-  else if (e.code === 'KeyN') vrRequestWorld((world.id + 1) % 3);   // デスクトップ: MRプレビュー → 自然 → 試験場 → MR
+  else if (e.code === 'KeyN') vrRequestWorld(WORLD_NEXT[world.id]);   // デスクトップ: MRプレビュー → MR試験 → 自然 → 試験場 → MR
   else if (e.code === 'KeyC') vrRequestCam();               // VR中: 操縦者目線 ⇄ 機体目線 (FPV)
-  else if (e.code === 'KeyY') { if (world.ex) exCycleItem(); else natCycleWind(); }      // 試験場: 科目の切替 (着陸して停止中のみ) / 自然: 風の強さ (無風→弱→中)
+  else if (e.code === 'KeyY') { if (world.mrx && mrx.placing) mrxCycleScale(1); else if (world.ex) exCycleItem(); else natCycleWind(); }   // MR試験の配置中は 縮尺      // 試験場: 科目の切替 (着陸して停止中のみ) / 自然: 風の強さ (無風→弱→中)
   else if (e.code === 'KeyG') { if (world.ex) exToggleDisp(); else natToggleAtti(); }     // 試験場: 本番 ⇄ 補助表示 / 自然: 位置安定 ON/OFF
   else if (e.code === 'KeyU') { if (world.ex) exRestartHold(); }    // 試験場: やり直し
   else if (e.code === 'KeyK') { if (world.ex) exToggleHold(); }     // 試験場 (フリー練習): 位置安定 ON/OFF
+  else if (e.code === 'Enter') mrx.enterPulse = true;
+  else if (e.code === 'BracketLeft') mrxCycleScale(-1);            // MR試験 (配置中): 縮尺 / 科目 (Enter = 配置・長押しで配置し直し)
+  else if (e.code === 'BracketRight') mrxCycleScale(1);
+  else if (e.code === 'Comma') mrxCycleSubject(-1);
+  else if (e.code === 'Period') mrxCycleSubject(1);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 function readKeyboard() {
@@ -4125,6 +4722,7 @@ function readKeyboard() {
   input.lx = k('ArrowRight') - k('ArrowLeft'); input.ly = k('ArrowUp') - k('ArrowDown');
   input.rx = k('KeyD') - k('KeyA'); input.ry = k('KeyW') - k('KeyS');
   input.recall = keys.has('KeyR'); input.hasController = true;
+  mrxRT(keys.has('Enter') || mrx.enterPulse); mrx.enterPulse = false;   // MR試験: Enter = 配置 / 長押しで配置し直し (1フレームより短い打鍵も1回の押下として数える)
 }
 
 // デスクトップ用の簡易マウスオービット
@@ -4144,7 +4742,7 @@ window.addEventListener('pointermove', (e) => {
   } else { orbit.th -= dx * 0.006; orbit.ph = clamp(orbit.ph + dy * 0.006, orbit.phMin, orbit.phMax); }
   orbit.x = e.clientX; orbit.y = e.clientY;
 });
-renderer.domElement.addEventListener('wheel', (e) => { spec.userCam = true; orbit.r = clamp(orbit.r * (1 + Math.sign(e.deltaY) * 0.08), orbit.rMin, orbit.rMax); e.preventDefault(); }, { passive: false });
+renderer.domElement.addEventListener('wheel', (e) => { spec.userCam = true; orbit.r = clamp(orbit.r * (1 + Math.sign(e.deltaY) * 0.08), orbit.rMin, world.mrx ? 40 : orbit.rMax); e.preventDefault(); }, { passive: false });   // MR試験は原寸のコースが 21 m あるので遠くまで引ける
 function updateOrbit() {
   const cp = Math.cos(orbit.ph);
   camera.position.set(orbit.tx + orbit.r * cp * Math.sin(orbit.th), orbit.ty + orbit.r * Math.sin(orbit.ph), orbit.tz + orbit.r * cp * Math.cos(orbit.th));
@@ -4204,9 +4802,10 @@ function frameBody(time, xrFrame) {
       const ref = renderer.xr.getReferenceSpace();
       if (ref) { updateHeadXR(xrFrame, ref); updatePlanes(xrFrame, ref); if (net.on) netXrFrame(xrFrame, ref); }   // netXrFrame は内部で例外を握りつぶす
       readXRInputs(xrSession, xrFrame, ref);
+      if (ref && world.mrx) { try { mrxXrFrame(xrFrame, ref); } catch (e) { /* アンカーが使えなくても飛行は続く */ } }
     }
   } else {
-    readKeyboard(); if (!world.vr) updateOrbit();            // デスクトップVRのカメラは vrUpdateRig が決める (一人称/三人称)
+    readKeyboard(); if (!world.vr || world.mrx) updateOrbit();            // デスクトップVRのカメラは vrUpdateRig が決める (一人称/三人称)
     head.pos.set(0, 1.6, 0); head.quat.identity(); head.fwd.set(0, 0, -1); head.fwdH.set(0, 0, -1); head.valid = true;
   }
   if (!placed && head.valid) placeDroneInitial();
@@ -4219,6 +4818,8 @@ function frameBody(time, xrFrame) {
   } else noCtrlT = 0;
   roomTimer -= dt;
   if (roomTimer <= 0) { roomTimer = C.ROOM_REFRESH; if (xr && planeFeature) recomputeRoom(); else if (!xr || !planeFeature) setFallbackRoom(); mon.check = true; }
+
+  if (world.mrx) mrxUpdate(dt);                              // MR試験: 配置中の追従・広さの確認
 
   // --- 固定タイムステップ ---
   if (placed && !dbg.freeze) {
@@ -4257,20 +4858,20 @@ function frameBody(time, xrFrame) {
   if (world.vr && !world.ex) {                               // 地形の面に沿わせる (斜面でも影が地面に埋もれない)
     const gy = vrGround(pos.x, pos.z); shadow.position.set(pos.x, gy + 0.03, pos.z);
     tmpV.set(vrw.nx, vrw.ny, vrw.nz); shadow.quaternion.setFromUnitVectors(Y_AXIS, tmpV);
-  } else { shadow.position.set(pos.x, sim.groundY + (world.ex ? 0.03 : 0.004), pos.z); if (world.ex) shadow.quaternion.identity(); }
+  } else { shadow.position.set(pos.x, sim.groundY + (world.ex && !world.mrx ? 0.03 : 0.004), pos.z); if (world.ex) shadow.quaternion.identity(); }
   const ss = (0.34 + h * 0.2) * ownScale; shadow.scale.set(ss, 1, ss);   // ownScale: 自然・操縦者目線で遠い機体を拡大している間だけ 1 でない
   shadowMat.opacity = 0.6 * clamp(1 - h / (2.2 * ownScale), 0, 1);
   shadowBias.value = xr && !world.vr && renderer.xr.hasDepthSensing() ? C.SHADOW_DEPTH_BIAS : 0;   // VR中は深度メッシュを描かない → 影を手前へずらす必要なし
 
-  drone.visible = !(world.vr && world.cam === 0);            // 一人称では自機モデルを描かない (影は残す)
+  drone.visible = !(world.vr && !world.mrx && world.cam === 0);   // 一人称では自機モデルを描かない (影は残す)。MR試験に一人称は無い (VRで一人称を選んだまま来ても機体は必ず見える)
   if (world.vr || fade.phase !== 0 || fadeQuad.visible || vigQuad.visible) vrFrame(dt, now);   // MRで切替が無い間は何もしない
   else if (ownScale !== 1) { ownScale = 1; drone.scale.setScalar(1); }   // MRへ戻った: 拡大を確実に戻す
   if (net.on) { try { netFrame(avg); } catch (e) { netPanic(); } }   // ルーム参加中のみ: 送信・他機の表示・音。失敗してもフレームループは止めない (ソロへ)
-  desk.visible = !xr && !world.vr;
+  desk.visible = !xr && (!world.vr || world.mrx);
   hudMesh.visible = sim.hudOn;
   updateHud(dt); updateHudFloat();
   updateMonitor(dt);                                         // ドローン視点を (30Hz上限で) RTへ描く: メイン描画の前
-  if (world.vr) updateAudio(avg, now, eyeW, eyeQ); else if (xr) updateAudio(avg, now, head.pos, head.quat); else updateAudio(avg, now, camera.position, camera.quaternion);
+  if (world.vr && !world.mrx) updateAudio(avg, now, eyeW, eyeQ); else if (xr) updateAudio(avg, now, head.pos, head.quat); else updateAudio(avg, now, camera.position, camera.quaternion);
   renderer.render(scene, camera);
 }
 let acc = 0;
@@ -4291,7 +4892,12 @@ function resetWorld() {
   netSessionReset();
 }
 
-let sharedBlocked = false;                                   // 'shared' 付きの requestSession が拒否された (ページを閉じるまで記憶)
+// requestSession の任意機能のうち、端末によっては「付けただけで開始そのものが失敗する」かもしれないもの (疑わしい順)。'shared' = Quest の共有スペース (experimental・ルーム使用時のみ) / 'anchors' = MR試験のコース固定 (Quest では以前から対応)。
+// 値: 0 = 付ける / 1 = 外して試している (まだ原因と確定していない) / 2 = このページでは付けない (外したら開始できた = 確定)。ページを閉じるまで記憶する。
+// 規則: 1回のタップで requestSession は多くて 2 回 (追加は 1 回だけ = ユーザー操作の有効期間を何度も消費しない)。失敗したら疑わしい順に 1 つだけ外して再試行し、通ったらその 1 つだけを確定で外す (通った方の機能は落とさない)。
+const xrFeat = { shared: 0, anchors: 0 };
+const XR_FEAT_ORDER = ['shared', 'anchors'];
+const XR_TAP_MSG = { shared: 'もう一度タップしてください（共有スペース機能なしで開始します）', anchors: 'もう一度タップしてください（コース固定機能なしで開始します）' };
 async function startXR(roomName) {
   renderer.xr.setReferenceSpaceType('local-floor');
   // 深度オクルージョン: three r170 は 'depth-sensing' が許可されると XRWebGLBinding.getDepthInformation() の
@@ -4302,23 +4908,36 @@ async function startXR(roomName) {
     init.optionalFeatures.push('depth-sensing');
     init.depthSensing = { usagePreference: ['gpu-optimized'], dataFormatPreference: [] };
   }
-  // ルーム使用時のみ Quest の共有スペース(experimental)を任意機能として要求。ここまで await は無い (= タップのユーザー操作の有効期間内に requestSession が出る)。
-  // PeerJS の読み込み等のネットワーク処理は全てセッション開始後 (下の netJoin) で、開始を遅らせない。
-  const wantShared = !!roomName && !sharedBlocked;
-  if (wantShared) init.optionalFeatures.push('shared');
+  // ルーム使用時のみ Quest の共有スペース(experimental)を任意機能として要求。'anchors' (MR試験のコース固定) は常に任意で要求する (セッションの途中では追加できない。許可されてもMR試験の外では一切使わない)。
+  // ここまで await は無い (= タップのユーザー操作の有効期間内に requestSession が出る)。PeerJS の読み込み等のネットワーク処理は全てセッション開始後 (下の netJoin) で、開始を遅らせない。
+  let used = XR_FEAT_ORDER.filter((f) => xrFeat[f] === 0 && (f !== 'shared' || !!roomName));   // 今回付ける「疑わしい」機能
+  if (used.includes('anchors')) init.optionalFeatures.push('anchors');
+  if (used.includes('shared')) init.optionalFeatures.push('shared');
   let session;
-  try { session = await navigator.xr.requestSession('immersive-ar', init); }
-  catch (err) {
-    // ユーザー操作なし (SecurityError: 読み込み時の自動開始など) は 'shared' のせいではない → そのまま上へ (次のタップでも 'shared' を付ける)。
-    if (!wantShared || (err && err.name === 'SecurityError')) throw err;
-    // それ以外は 'shared' が原因かもしれない: 外して再試行。ただしこの時点でユーザー操作の有効期間が切れていることがある。
-    init.optionalFeatures = init.optionalFeatures.filter((f) => f !== 'shared');
-    try { session = await navigator.xr.requestSession('immersive-ar', init); sharedBlocked = true; }   // 外したら通った → 以後このページでは 'shared' を付けない
-    catch (err2) {
-      if (err2 && err2.name === 'SecurityError') { sharedBlocked = true; const e = new Error('needTap'); e.needTap = true; throw e; }   // 操作切れ: 次のタップは 'shared' なしで一発で通す
-      throw err2;                                              // 'shared' を外しても同じく失敗 → 原因は別 (sharedBlocked は立てない)
+  try {
+    session = await navigator.xr.requestSession('immersive-ar', init);
+    for (const f of XR_FEAT_ORDER) if (xrFeat[f] === 1) xrFeat[f] = 2;   // 外して試していた機能なしで通った → 確定
+  } catch (err) {
+    // ユーザー操作なし (SecurityError: 読み込み時の自動開始など) は機能のせいではない → そのまま上へ (次のタップでも同じ機能を付ける)。外せる機能が無い時も同じ。
+    if (!used.length || (err && err.name === 'SecurityError')) throw err;
+    // それ以外は任意機能が原因かもしれない: 疑わしい順に 1 つだけ外して、1 回だけ再試行。ただしこの時点でユーザー操作の有効期間が切れていることがある。
+    const v = used[0], rest = used.slice(1);
+    init.optionalFeatures = init.optionalFeatures.filter((f) => f !== v);
+    try {
+      session = await navigator.xr.requestSession('immersive-ar', init);
+      xrFeat[v] = 2;                                           // 外したら通った → 以後このページでは v を付けない (残りの機能は通ったのでそのまま)
+      for (const f of XR_FEAT_ORDER) if (xrFeat[f] === 1) xrFeat[f] = 0;   // v とは別に「外して試していた」機能は無実かもしれない: 次の開始でもう一度付けて確かめる
+      used = rest;
+    } catch (err2) {
+      if (err2 && err2.name === 'SecurityError') {             // 操作切れ: 次のタップは v なしで一発で通す (通れば確定)
+        xrFeat[v] = 1; const e = new Error('needTap'); e.needTap = true; e.feat = v; throw e;
+      }
+      if (rest.length) xrFeat[rest[0]] = 1;                    // v を外しても同じく失敗し、まだ別の候補が付いていた: 次のタップはそちらを外して試す (v は付けたまま)
+      else for (const f of XR_FEAT_ORDER) if (xrFeat[f] === 1) xrFeat[f] = 0;   // 全部外しても失敗 → 原因は別 (どれも外さない)
+      throw err2;
     }
   }
+  const gotShared = used.includes('shared');
   xrSession = session;
   resetWorld();
   session.addEventListener('end', onXREnd);
@@ -4338,13 +4957,13 @@ async function startXR(roomName) {
   renderer.setAnimationLoop(frame);
   try {                                                      // リセンター (local-floor の原点・向きが変わる): VR中なら視点を作り直す (向いている方向を機首方向に取り直す)
     const rs0 = renderer.xr.getReferenceSpace();
-    if (rs0 && typeof rs0.addEventListener === 'function') rs0.addEventListener('reset', () => { if (world.vr) { rigS.init = false; rigS.keep = false; } });
+    if (rs0 && typeof rs0.addEventListener === 'function') rs0.addEventListener('reset', () => { if (world.vr && !world.mrx) { rigS.init = false; rigS.keep = false; } if (world.mrx) mrxOnReset(); });   // MR試験: アンカーが無ければ配置し直し
   } catch (e) { /* ignore */ }
   if (roomName) {                                            // ルーム参加は非同期・失敗してもソロ飛行は続く
     try {
       net.retryN = 0;
       const pj = netJoin(roomName, 'pilot'); if (pj && pj.catch) pj.catch(() => {});
-      if (wantShared && !sharedBlocked) netInitShared(session); else sharedDiag('none', 'retry-without-shared');   // (iii) 'shared' を外して開始した (このページでは以後も付けない)
+      if (gotShared) netInitShared(session); else sharedDiag('none', 'retry-without-shared');   // (iii) 'shared' を外して開始した (このページでは以後も付けない)
       const rs = renderer.xr.getReferenceSpace();              // リセンター検出 (手動の位置合わせが無効になる)
       if (rs && typeof rs.addEventListener === 'function') rs.addEventListener('reset', () => { try { netOnLocalReset(); } catch (e) { /* ignore */ } });
     } catch (e) { /* ignore */ }
@@ -4707,7 +5326,7 @@ function netStartPeer(peer, slot, gen) {
   net.peer = peer; net.slot = slot; net.ready = true; net.sid = Math.random().toString(36).slice(2, 10); net.seq = 0; net.reconnectN = 0; net.retryN = 0;
   netSetStatus('ready');
   if (net.role === 'pilot') setDroneColor(drone, PALETTE[slot % PALETTE.length]);
-  if (world.vr && net.role === 'pilot') {                      // VRで先に始めていた: スロットが決まったので自分のパッド / コースのセルへ (飛行中は帰還先だけ更新)
+  if (world.vr && !world.mrx && net.role === 'pilot') {        // VRで先に始めていた: スロットが決まったので自分のパッド / コースのセルへ (飛行中は帰還先だけ更新)
     if (sim.state === ST_LANDED) { vrPlaceAtHome(); if (world.ex) vrRigResnap(); else rigS.init = false; if (world.ex) { exRestart(); exSyncCells(true); } }
     else if (world.ex) { exOrigin(exOwnSlot(), _exO); ex.ox = _exO.x; ex.oz = _exO.z; world.home.set(ex.ox, 0, ex.oz); }
     else { vrHomeFor(slot, world.home); world.home.y = vrGroundMax(world.home.x, world.home.z); }
@@ -4767,7 +5386,7 @@ function newPs(slot) {
     sp: new THREE.Vector3(), sq: new THREE.Quaternion(), sh: new THREE.Vector3(), shYaw: 0, srpm: 0,     // 補間結果 (共有座標)
     drone: null, fade: 0, shown: false, dist: 1e9, monD: null, monU: null, user: null, specAl: true, row: null,
     planes: null, plRev: -1, plN: 0, plGot: 0, plTmp: null, planesVer: 0, plKind: 0, plId: '', rowSig: '',
-    natKnown: false, exItem: 0, exHold: true, exFpv: false, exScore: 100, exTxt: 0, exRes: 0, exRem: 0, avatar: null,   // 試験場の相手の状態
+    natKnown: false, mrx: false, exItem: 0, exHold: true, exFpv: false, exScore: 100, exTxt: 0, exRes: 0, exRem: 0, avatar: null,   // 試験場の相手の状態
     idRaw: '', calD: -1, ep: -1, rxWin: 0, rxN: 0, plDone: -1, plAskAt: 0, plReqAt: 0,                 // idRaw: 受信したままのid (比較用) / calD: 相手の手動2点間距離[cm] / ep: 相手の align.rev
   };
 }
@@ -4982,6 +5601,7 @@ function rxState(ps, m) {
   b[o + 12] = clamp(m[10], 0, 30000);
   ps.w = (ps.w + 1) % SNAP_N; if (ps.n < SNAP_N) ps.n++;
   ps.rpm = b[o + 12]; ps.st = m[11]; ps.mode = m[12]; ps.h = clamp(m[19], -1000, 100000); ps.spd = clamp(m[20], 0, 10000);
+  ps.mrx = m.length === 28 && wd === 0 && !!(m[23] & 32);                    // MR試験中 (v0.9 以降。名簿の表示だけに使う)
   ps.natKnown = m.length === 28 && wd === 1;                                 // 自然の相手が 位置安定 を載せている (v0.8 以降)。旧版・MR・試験場の状態では偽
   if (m.length === 28) { ps.exItem = m[23] & 7; ps.exHold = !!(m[23] & 8); ps.exFpv = !!(m[23] & 16); ps.exScore = m[24]; ps.exTxt = m[25]; ps.exRes = m[26]; ps.exRem = m[27]; }
   else if (wd === 2) { ps.exItem = 0; ps.exFpv = false; }
@@ -4997,7 +5617,7 @@ function netTxState(nowMs, avgRpm) {
   if (net.role !== 'pilot' || !net.ready || net.txPause || !placed) return;
   if (dbg.preTx) dbg.preTx(nowMs);
   let hyaw;
-  if (world.vr) {                                            // VR: 全員共通のワールド座標をそのまま送る (位置合わせ不要)。頭 = 目の位置・向き
+  if (world.vr && !world.mrx) {                              // VR: 全員共通のワールド座標をそのまま送る (位置合わせ不要)。頭 = 目の位置・向き
     _tp.copy(drone.position); _tq.copy(drone.quaternion); _th.copy(eyeW);
     tmpV.set(0, 0, -1).applyQuaternion(eyeQ); hyaw = Math.atan2(-tmpV.x, -tmpV.z);
   } else {
@@ -5013,8 +5633,9 @@ function netTxState(nowMs, avgRpm) {
   a[6] = r3(_tq.x); a[7] = r3(_tq.y); a[8] = r3(_tq.z); a[9] = r3(_tq.w);
   a[10] = Math.round(avgRpm); a[11] = sim.state; a[12] = sim.mode;
   a[13] = r3(_th.x); a[14] = r3(_th.y); a[15] = r3(_th.z); a[16] = r3(angleDiff(hyaw, 0));
-  a[17] = align.kind; a[18] = align.id; a[19] = Math.round((pos.y - sim.groundY) * 100); a[20] = Math.round(vel.length() * 10); a[21] = align.rev; a[22] = world.id;
-  if (world.ex) { a.length = 28; a[23] = ex.item | (ex.hold ? 8 : 0) | (world.cam === 0 ? 16 : 0); a[24] = ex.score; a[25] = exTxId(); a[26] = ex.res; a[27] = Math.min(999, Math.ceil(exRem())); }   // 試験場: 課題 / 位置安定 / FPV、得点、指示の番号、結果、残り時間
+  a[17] = align.kind; a[18] = align.id; a[19] = Math.round((pos.y - sim.groundY) * 100); a[20] = Math.round(vel.length() * 10); a[21] = align.rev; a[22] = world.mrx ? 0 : world.id;   // MR試験は MR として報告する (実座標・コースの情報なし)
+  if (world.mrx) { a.length = 28; a[23] = 32; a[24] = 100; a[25] = 0; a[26] = 0; a[27] = 0; }   // bit 5 = MR試験 (名簿用)。28 要素・a[23] <= 63 は旧版 (v0.8) も受け付け、MR の相手の試験場欄は使わない = 無害
+  else if (world.ex) { a.length = 28; a[23] = ex.item | (ex.hold ? 8 : 0) | (world.cam === 0 ? 16 : 0); a[24] = ex.score; a[25] = exTxId(); a[26] = ex.res; a[27] = Math.min(999, Math.ceil(exRem())); }   // 試験場: 課題 / 位置安定 / FPV、得点、指示の番号、結果、残り時間
   else if (world.id === 1) { a.length = 28; a[23] = nat.hold ? 8 : 0; a[24] = 100; a[25] = 0; a[26] = 0; a[27] = 0; }   // 自然: 位置安定 (bit 3) を 28 要素の形で送る。長さ 24〜27 は旧版 (v0.7) が状態ごと捨てるので、旧版も受け付ける 28 要素に載せる (旧版は自然の相手の試験場欄を使わない = 無害)
   else a.length = 23;
   const str = JSON.stringify(a), L = net.list;
@@ -5216,7 +5837,7 @@ function netUpdateRemotes(nowMs, dt) {
   const spectator = net.role === 'spectator', L = net.list, rt = nowMs - C.NET_INTERP_MS, stp = dt / C.NET_FADE_S;
   const myCm = align.kind === NET_KIND_MANUAL ? Math.round(cal.manual.d * 100) : -1;
   let unal = 0, nConn = 0, nSpec = 0, nNone = 0, nOther = 0, nWait = 0, nDiff = 0, nWorld = 0;
-  const myW = spectator ? spec.world : world.id;                  // 自分(観戦なら表示中)の世界 0=MR 1=自然 2=試験場
+  const myW = spectator ? spec.world : world.mrx ? 0 : world.id;                  // 自分(観戦なら表示中)の世界 0=MR 1=自然 2=試験場
   net.audN = 0;
   for (let i = 0; i < L.length; i++) {
     const ps = L[i], open = ps.conn && ps.conn.open && nowMs - ps.lastMsg < C.NET_LOST_MS;   // 「接続」= 開いていて、かつ最近何か届いている
@@ -5602,6 +6223,7 @@ function specRosterUpdate() {
     { const exEl = ps.row.children[6], on = ps.world === 2 && live;   // 試験場: 課題・指示・得点・結果
       if (on) { const it = EX_ITEMS[ps.exItem] || EX_ITEMS[0], t = it.name + '　' + (ps.exRes ? EX_RES_NAME[ps.exRes] : ps.mode === MODE_AUTO ? 'お手本飛行' : EX_TXT[ps.exTxt]) + '　' + ps.exScore + '点　位置安定' + (ps.exHold ? 'ON' : 'OFF') + '　残' + exMMSS(ps.exRem); if (exEl.textContent !== t) exEl.textContent = t; }
       if (!on && ps.world === 1 && live && ps.natKnown) { const t2 = '位置安定' + (ps.exHold ? 'ON' : 'OFF'); if (exEl.textContent !== t2) exEl.textContent = t2; if (exEl.hidden) exEl.hidden = false; }   // 自然: 位置安定だけ
+      else if (!on && ps.world === 0 && live && ps.mrx) { const t3 = 'MR試験（現実の床に縮尺コース）'; if (exEl.textContent !== t3) exEl.textContent = t3; if (exEl.hidden) exEl.hidden = false; }   // MR試験
       else if (exEl.hidden === on) exEl.hidden = !on; }
     ps.row.className = 'row' + (ps.specAl && ps.world === spec.world ? '' : ' dim') + (spec.follow === ps.slot ? ' fol' : '');   // 表示していない世界のパイロットは薄く
   }
@@ -5634,6 +6256,8 @@ if (DEBUG) {
     ex, exw, EX_COURSES, EX_ITEMS, EX_TXT, TX, EXP, EX_PASS, EX_RUN, EX_ATL, exDump, exCellPos, exOrigin, exOwnSlot, exPlan, exRestart, exEnter, exLeave, exStep, exZone, exZoneRaw, exWindAt, exSetWind, exCycleWind, exSpeak, exJudgeFail, vrRigResnap, exArmToggle, exCycleItem, exToggleHold, exToggleDisp, exRestartHold, exDemoToggle, exDemoStop, exSyncCells, exDrawHud, exBoardData, exBoardTick, exFrame, exAtti, exInstr, exRem, exDemoCommands, exBuildWorld, exAvatar, exTxId, exHudSig, exPlaceAtHome, exResetDrone, exLanded, exYBtn, exY, exLTrig, exL, exSetItem, exFinish, exTrigger, exBegin, exDone, EX_RES_NAME, pilotScaleUpdate, worldId, vrPilotSpot, vrRigPilot, exPost, exPre, exFault, exFail, exBestAll, exTopFaults, exRunLine, exSay, exAnnounce, exToast, exApplyDisp, exCapUpdate, exBoardDraw, exBestSave, EX_VOICE, exSolo() { return net.on; },
     get yawCmd() { return yawCmd; }, get xrSession() { return xrSession; }, get placed() { return placed; },
     setLeftGrip(g) { hud.leftGrip = g; },
+    // --- MR試験 ---
+    mrx, mrxw, cf, cm, exMap, cfToWorld, xrFeat, worldLabel, exLayout, setFallbackRoom, exLwMinGet: () => exLwMin, mrxMoveFrame, mrxAfterItem, mrxSetScale, mrxEnter, mrxLeave, mrxSetFrame, mrxFitEval, mrxFitUpdate, mrxConfirm, mrxReplace, mrxCycleScale, mrxCycleSubject, mrxRT, mrxXrFrame, mrxOnReset, P_MRX, WORLD_NEXT, mrxSync, mrxUpdate, collideMRX, MRX_SNAME, MRX_MAXALT, mrxPlaceHome, mrxPlacingUpdate, mrxFrame, mrxAltText, mrxFlick, mrxShow, mrxApplyDisp, mrxDrawHudPlacing,
     // --- マルチプレイ ---
     net, align, cal, sharedSp, sFL, lFS, spec, dbg, LITE, PALETTE, raud, netJoin, netLeave, netOnLocalReset, netRescan, netTickBody, specLayout, calToggle, calSolve, calRecord, createDrone, setDroneColor, hashRoom, sampleRemote, isAlignedWith, startSpectator, specFit, getPs, netOnData,
     /** 通信状態のスナップショット (JSON化できる形) */
@@ -5641,7 +6265,7 @@ if (DEBUG) {
       const now = performance.now();
       return {
         on: net.on, role: net.role, room: net.room, hash: net.hash, slot: net.slot, status: net.status, ready: net.ready, notice: net.notice, nConn: net.nConn, nSpec: net.nSpec, unaligned: net.unaligned, nWorld: net.nWorld, world: world.id,
-        align: { kind: align.kind, id: align.id, forced: align.forced }, shared: { diag: sharedSp.diag, why: sharedSp.why, text: SHARED_DIAG_TXT[sharedSp.diag] || '', hasSpace: !!sharedSp.space, uuid: sharedSp.uuid, valid: sharedSp.valid, blocked: sharedBlocked }, tx: net.txCount, rx: net.rxCount, rxBad: net.rxBad, perfMs: net.perfN ? net.perfMs / net.perfN : 0,
+        align: { kind: align.kind, id: align.id, forced: align.forced }, shared: { diag: sharedSp.diag, why: sharedSp.why, text: SHARED_DIAG_TXT[sharedSp.diag] || '', hasSpace: !!sharedSp.space, uuid: sharedSp.uuid, valid: sharedSp.valid, blocked: xrFeat.shared > 0 }, tx: net.txCount, rx: net.rxCount, rxBad: net.rxBad, perfMs: net.perfN ? net.perfMs / net.perfN : 0,
         scripts: Array.from(document.scripts).map((e) => e.src).filter(Boolean),
         peers: net.list.map((ps) => ({ slot: ps.slot, role: ps.role, open: !!(ps.conn && ps.conn.open), dir: ps.conn ? ps.conn._dir : '', seq: ps.seq, rtt: ps.rtt, hasState: ps.hasState, kind: ps.kind, id: ps.id, shown: ps.shown, fade: ps.fade, age: now - ps.lastState, silent: now - ps.lastMsg, st: ps.st, mode: ps.mode, n: ps.n, world: ps.world })),
       };
@@ -5699,7 +6323,7 @@ if (DEBUG) {
       try { await startXR(roomName); }
       catch (err) {
         stopAudio(); btn.disabled = false;
-        if (err && err.needTap) msgEl.textContent = 'もう一度タップしてください（共有スペース機能なしで開始します）';
+        if (err && err.needTap) msgEl.textContent = XR_TAP_MSG[err.feat] || XR_TAP_MSG.shared;
         else if (!silent) msgEl.textContent = 'MRを開始できませんでした: ' + (err && err.message ? err.message : err);
       }
       starting = false;
@@ -5710,7 +6334,7 @@ if (DEBUG) {
     go(true);
   } else {
     // デスクトッププレビュー (ルーム名があれば観戦モード)
-    const previewMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / V=ドローン視点 / N=ワールド切替（MR→自然→試験場） / C=視点 / 自然: G=位置安定 ON/OFF Y=風（無風→弱→中） / 試験場: T=始動→↑で離陸 Y=科目 M=お手本 G=本番/補助表示 U=やり直し K=位置安定（フリー練習） / ドラッグ=視点';
+    const previewMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / V=ドローン視点 / N=ワールド切替（MR→MR試験→自然→試験場） / C=視点 / 自然: G=位置安定 ON/OFF Y=風（無風→弱→中） / 試験場: T=始動→↑で離陸 Y=科目 M=お手本 G=本番/補助表示 U=やり直し K=位置安定（フリー練習） / MR試験: Enter=配置（長押しで配置し直し） [ ]=縮尺 , .=科目 / ドラッグ=視点';
     const specMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。ルーム名が入力されているので、PCから観戦できます（自機は飛ばしません）。';
     const refresh = () => { const r = currentRoom(); btn.textContent = r ? '観戦を開始' : 'PCプレビューを開始'; msgEl.textContent = r ? specMsg : previewMsg; };
     roomEl.addEventListener('input', refresh); refresh();
