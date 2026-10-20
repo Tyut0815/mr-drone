@@ -5520,7 +5520,7 @@ function recAdvise(a) {
     for (let i = 0; i < F.length; i++) if (!claimed.has(i) && !F[i].f && F[i].p === 1) (grp[F[i].n] || (grp[F[i].n] = [])).push(i);
     for (const k of Object.keys(grp).sort()) if (grp[k].length >= ADV_SAME_KIND) {
       const idx = grp[k], lg = []; for (const i of idx) if (F[i].l && lg.indexOf(F[i].l) < 0) lg.push(F[i].l);
-      add('SAME_KIND', 'fault', '同じ減点が繰り返されています', '「' + k + '」の1点減点が' + idx.length + '回あります（' + lg.map(recAt).join('・') + '）', ADV_KIND_TIP[k] || ADV_TIP_REPLAY, idx, idx.length);
+      add('SAME_KIND', 'fault', '「' + k + '」が繰り返されています', '「' + k + '」の1点減点が' + idx.length + '回あります（' + lg.map(recAt).join('・') + '）', ADV_KIND_TIP[k] || ADV_TIP_REPLAY, idx, idx.length);
     }
   }
   // 15. 不 (他のルールで説明されなかったもの)
@@ -5923,10 +5923,12 @@ const RP_STAGES = [
   (B) => { rpPanelBuild(B.track); rpPanelDraw(0, rpSample(0, rp.s), 0); rpPanelDraw(0, rp.s, 1); },
   (B) => { rpPanelDraw(0, rp.s, 2); rpPanelDraw(0, rp.s, 3); },
   (B) => { rpPanelDraw(0, rp.s, 4); },
-  // 8: シェーダーの準備 (KHR_parallel_shader_compile があれば裏で。終わるまで次の段へ進まない。最大 3 秒)
+  // シェーダーの準備: KHR_parallel_shader_compile があれば裏で (終わるまで次の段へ進まない。最大 3 秒)。無ければこの段で同期して作る (次の段で場面に出す時に重ならない)
   (B) => {
     const hid = [rp.far, rp.num, rp.ghost2].filter((o) => o && !o.visible); for (const o of hid) o.visible = true;   // compile は見えている物だけを見るので、一時的に出す
-    try { if (renderer.compileAsync) { B.wait = true; B.waitT = performance.now(); const done = () => { B.wait = false; }; Promise.all([renderer.compileAsync(rp.root, camera, scene), renderer.compileAsync(rp.dio, camera, scene), renderer.compileAsync(rp.far, camera, scene)]).then(done, done); } } catch (e) { B.wait = false; }
+    let par = false; try { par = renderer.extensions.has('KHR_parallel_shader_compile'); } catch (e) { par = false; }
+    if (!par) { try { renderer.compile(rp.root, camera, scene); renderer.compile(rp.dio, camera, scene); renderer.compile(rp.far, camera, scene); } catch (e) { /* 初回の描画で作られる */ } }
+    else try { if (renderer.compileAsync) { B.wait = true; B.waitT = performance.now(); const done = () => { B.wait = false; }; Promise.all([renderer.compileAsync(rp.root, camera, scene), renderer.compileAsync(rp.dio, camera, scene), renderer.compileAsync(rp.far, camera, scene)]).then(done, done); } } catch (e) { B.wait = false; }
     for (const o of hid) o.visible = false;
   },
   // 9: 場面へ出す
@@ -6067,7 +6069,7 @@ function rpPanelDraw(t, S, part) {
       if (tip) { x.fillStyle = '#c9f2d6'; x.font = '24px sans-serif'; rbWrap(x, '助言（自動分析・非公式）　' + tip, 22, 230, 980, 30, 2); }
     } else { x.fillStyle = '#9fb3c8'; rbFit(x, F.length ? '減点: ' + F.length + ' 件（A=次の減点）' : '減点はありません', 22, 192, 980, 28, 22, false); }
   }
-  if (P(4)) { x.fillStyle = '#8fa3b8'; rbFit(x, 'トリガー=再生/停止　スティック左右=送り　上下=速さ　A=次の減点　Y=前の出来事　左トリガー=お手本　B=終了', 22, 304, 980, 24, 22, false); }
+  if (P(4)) { x.fillStyle = '#8fa3b8'; rbFit(x, '右トリガー=再生/停止　右スティック 左右=送り 上下=速さ　A/Y=次/前　左トリガー=お手本　B=終了', 22, 304, 980, 24, 22, false); }
   rp.ptex.needsUpdate = true;
 }
 
