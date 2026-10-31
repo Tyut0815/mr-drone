@@ -24,7 +24,7 @@
   button:disabled { opacity:.5; cursor:default; }
   #msg { margin:14px 0 0; font-size:14px; line-height:1.6; color:#ffd479; min-height:1em; }
   #nameWrap { margin:0 0 14px; }
-  #nameWrap label { display:block; font-size:13px; color:var(--muted); margin:0 0 6px; }
+  #nameWrap label, #windWrap label { display:block; font-size:13px; color:var(--muted); margin:0 0 6px; }
   #pilotname { width:100%; box-sizing:border-box; padding:12px 14px; border-radius:12px; border:1px solid #ffffff33; background:#0b0f14aa; color:var(--fg); font-size:16px; font-family:inherit; }
   #pilotname:focus { outline:2px solid var(--accent); outline-offset:1px; }
   #roomWrap { margin:0 0 14px; }
@@ -64,7 +64,73 @@
   #stickWrap label { display:block; font-size:13px; color:var(--muted); margin:0 0 6px; }
   #stickmode, #windsel { width:100%; box-sizing:border-box; padding:11px 12px; border-radius:12px; border:1px solid #ffffff33; background:#0b0f14aa; color:var(--fg); font-size:16px; font-family:inherit; }
   #stickmode:focus, #windsel:focus { outline:2px solid var(--accent); outline-offset:1px; }
-  #roomHint { margin:6px 0 0; font-size:11.5px; line-height:1.5; color:var(--muted); }
+  #roomHint { margin:6px 0 0; font-size:13px; line-height:1.5; color:var(--muted); }
+  #roomHint.need { color:#ffd479; }
+  /* ---- 開始画面: プレイ方法の選択 (menu) → 説明と設定 (detail) → 操作一覧 (keys) ---- */
+  [hidden] { display:none !important; }
+  .sr { position:absolute; width:1px; height:1px; margin:-1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+  .card.wide { max-width:960px; }
+  .card.pane { display:flex; flex-direction:column; padding:0; max-height:calc(100vh - 32px); max-height:calc(100dvh - 32px); }   /* 説明画面: 本文だけがスクロールし、下の「開始 / 戻る」は常に見える */
+  .pane > .body { flex:1 1 auto; min-height:0; overflow:auto; padding:24px 28px 8px; }
+  .pane > .foot { flex:0 0 auto; display:flex; flex-wrap:wrap; gap:12px; padding:14px 28px 18px; border-top:1px solid #ffffff22; border-radius:0 0 20px 20px; background:#0b0f14cc; }
+  .grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:16px; margin:0 0 20px; }
+  button.mode { position:relative; display:flex; align-items:center; gap:18px; width:auto; min-height:120px; padding:18px 22px; border-radius:18px; border:1px solid #ffffff2e; background:#ffffff0d; color:var(--fg); text-align:left; font-size:16px; font-weight:400; font-family:inherit; }
+  button.mode:hover { background:#38d39f1f; border-color:var(--accent); }
+  button.mode:active { transform:scale(.99); }
+  button.mode svg { flex:0 0 64px; width:64px; height:64px; fill:none; stroke:var(--accent); stroke-width:2.6; stroke-linecap:round; stroke-linejoin:round; }
+  button.mode .tx { display:block; min-width:0; }
+  button.mode .nm { display:block; font-size:22px; font-weight:700; line-height:1.3; }
+  button.mode .ds { display:block; margin-top:5px; font-size:15px; line-height:1.45; color:var(--muted); }
+  button.mode .last { position:absolute; top:10px; right:12px; padding:2px 10px; border-radius:999px; background:var(--accent); color:#06231a; font-size:12px; font-weight:700; }
+  #start button:focus-visible { outline:3px solid #fff; outline-offset:3px; box-shadow:0 0 0 7px #38d39f66; }
+  .foot #msg { flex:0 0 100%; margin:0; min-height:0; }
+  .foot #msg:empty { display:none; }
+  .links { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .links #ver { margin:0; }
+  button.link { width:auto; padding:12px 20px; border-radius:12px; border:1px solid #ffffff33; background:transparent; color:var(--fg); font-size:16px; font-weight:600; font-family:inherit; }
+  button.link:hover, button.sec:hover { background:#ffffff1a; }
+  button.sec { width:auto; flex:0 0 auto; padding:16px 24px; border:1px solid #ffffff44; background:#ffffff12; color:var(--fg); font-size:18px; font-family:inherit; }
+  button.pri { flex:1 1 0; width:auto; min-width:0; font-family:inherit; font-size:22px; }
+  .col { display:flex; flex-direction:column; min-width:0; }   /* 左: 説明 → 必要なもの・注意 → 設定。ルーム名が必須のモードは設定を先に (空のままだと開始できないので、見えるところへ) */
+  .col > * { order:1; }
+  .col > .desc { order:0; }
+  .col > #dSet { order:2; }
+  .roomfirst .col > #dSet { order:0; }
+  .col > h3:first-child { margin-top:4px; }
+  .pane h2 { margin:0 0 12px; font-size:28px; letter-spacing:.02em; }
+  .pane h2:focus { outline:none; }
+  .pane h3 { margin:18px 0 8px; font-size:15px; font-weight:700; color:var(--accent); letter-spacing:.04em; }
+  .kind { display:inline-block; margin:0 0 8px; padding:2px 12px; border-radius:999px; border:1px solid var(--accent); color:var(--accent); font-size:13px; font-weight:700; }
+  .cols { display:grid; grid-template-columns:1fr; gap:0 28px; }
+  .desc p { margin:0 0 8px; font-size:16px; line-height:1.65; }
+  .pane ul { margin:0 0 6px; padding-left:20px; font-size:15px; line-height:1.65; }
+  .pane li { margin:0 0 4px; }
+  .pane table { width:100%; border-collapse:collapse; font-size:15px; line-height:1.5; }
+  .pane th, .pane td { padding:7px 8px; text-align:left; vertical-align:top; border-top:1px solid #ffffff1c; }
+  .pane thead th { border-top:0; color:var(--muted); font-size:12.5px; font-weight:600; }
+  .pane tbody th { width:42%; color:var(--accent); font-weight:700; }
+  .pane .note { margin:8px 0 0; font-size:13px; line-height:1.6; color:var(--muted); }
+  .fields { display:block; }
+  #kBody section { margin:0 0 6px; }
+  #kBody tbody th { width:30%; }
+  #kBody .note { margin:8px 0 0; }
+  #kBody p { margin:0 0 8px; font-size:14.5px; line-height:1.65; }
+  #windWrap { margin:0 0 14px; }
+  @media (min-width:880px) { .cols { grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); } }
+  @media (max-width:640px) {
+    #start { padding:10px; }
+    .grid { grid-template-columns:1fr; gap:12px; }
+    .card.wide { padding:20px 16px 18px; }
+    .card.pane { padding:0; max-height:calc(100vh - 20px); max-height:calc(100dvh - 20px); }
+    .pane > .body { padding:18px 16px 6px; }
+    .pane > .foot { padding:12px 16px 14px; }
+    button.mode { padding:14px 16px; gap:14px; }
+    button.mode svg { flex-basis:52px; width:52px; height:52px; }
+    button.mode .nm { font-size:20px; }
+    .pane h2 { font-size:24px; }
+    button.sec { padding:14px 16px; font-size:16px; }
+    button.pri { font-size:19px; }
+  }
 </style>
 <script type="importmap">
 { "imports": {
@@ -75,39 +141,91 @@
 </head>
 <body>
 <div id="start">
-  <div class="card">
-    <h1>MRドローン</h1>
+  <main id="scrMenu" class="card wide" aria-labelledby="menuTitle">
+    <h1 id="menuTitle">MRドローン</h1>
     <p class="sub">Meta Quest 3 / 3S のパススルーで、部屋の中を飛ぶ仮想クアッドコプター</p>
-    <ul>
-      <li>広めの場所で、周囲の安全を確認してから開始してください。</li>
-      <li><b>自動モード</b>：ドローンが部屋の中を自由に飛び回ります。</li>
-      <li><b>手動モード</b>：モード2 は 左スティック＝上昇下降・旋回、右スティック＝前後・左右。モード1 は 左＝前後・旋回、右＝上昇下降・左右（下で切替）。</li>
-      <li><b>A</b>＝自動/手動切替　<b>B</b>＝離陸/着陸　<b>右トリガー長押し</b>＝手元へ呼び戻し　<b>X</b>＝HUD表示切替　<b>左トリガー</b>＝ドローン視点　<b>Y</b>＝位置合わせ（ルーム参加時）</li>
-      <li><b>右スティック長押し（0.5秒）</b>＝ワールド切替（MR → MR試験 → 自然 → 試験場 → MR）　<b>左スティック押込み</b>＝視点切替（VR：操縦者目線 ⇄ 一人称）</li>
-      <li><b>試験場</b>（無人航空機操縦士 一等・二等 実地試験の練習場）：地面に立ち、試験員の指示（音声と字幕）に従って飛ばします。<b>B</b>＝モーター始動/停止、スロットルで離陸・降下して接地すれば着陸　<b>左Y</b>＝科目　<b>A</b>＝お手本　<b>左トリガー</b>＝本番/補助表示（長押しでやり直し）。フリー練習では <b>左Y長押し</b>＝位置安定 ON/OFF、<b>A</b>＝風の強さ。<br>判定のある試験は 1 回ごとに記録され、終了後に自動の<b>アドバイス</b>が出ます（公式の採点・指導ではありません）。着陸してモーターを止めている時、<b>右トリガー（短押し）</b>＝直前の飛行の<b>再生</b>（右スティック左右＝送り、上下＝速さ、A＝次の減点、左Y＝前の出来事、左トリガー＝お手本、B＝終了）、<b>左X 1秒長押し</b>＝<b>記録ボード</b>（右スティック左右＝ページ、上下＝選択、右トリガー＝再生、B＝閉じる）。名前は開始画面の「受験者名」で記録を分けます。</li>
-      <li><b>自然</b>（ワールド切替で入る景色）：<b>左トリガー</b>＝位置安定 ON/OFF（既定ON。OFFだと止まらず風に流され、自動飛行・帰還は使えません）　<b>左Y</b>＝風の強さ（無風→弱→中。下の「風（VR）」と同じ）</li>
-      <li><b>MR試験</b>（MR → <b>MR試験</b> → 自然 → 試験場 → MR の順）：パススルーのまま、部屋の<b>床に同じ6科目のコースを縮尺（原寸・3/4・1/2・1/3）で描いて</b>、立った位置から目視で飛ばします。広さは原寸で幅21m×奥行15m（二等スクエア。1/2 なら 10.5m×7.5m）。配置中：受験者の位置に立ってコースの正面を向き、<b>右トリガー</b>で配置（押した瞬間の立ち位置と向き）。<b>左Y</b>＝縮尺　<b>左スティック左右</b>＝科目　<b>右スティック</b>＝位置の微調整（<b>右グリップ</b>を押しながら左右＝向き）。配置後：<b>左Y</b>＝科目（立ち位置はそのまま）、<b>右トリガー1秒長押し</b>（モーター停止中）＝配置し直し。ほかは試験場と同じです。HUDの高度と速度は本番の寸法に換算した値（実寸は小さく併記）。壁や家具に重なると赤い枠と警告が出ます。コントローラーが必要です。</li>
-      <li class="warn">VRでは周囲が見えません。その場から動かずに操作してください</li>
-      <li>コントローラーなし（ハンドトラッキング）の場合は自動モードで飛行します。ピンチで離着陸。</li>
-    </ul>
-    <div id="nameWrap"><label for="pilotname">受験者名（試験場・MR試験の記録を名前ごとに分けます。空欄は「ゲスト」）</label><input id="pilotname" type="text" maxlength="16" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ゲスト"></div>
-    <div id="roomWrap"><label for="room">ルーム名（空欄なら1人で飛行）</label><input id="room" type="text" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ルーム名（空欄なら1人で飛行）">
-      <p id="roomHint">同じルーム名の人と一緒に飛ばせます（PCは観戦）。位置合わせは Y ボタン（全員が同じ2点を同じ順に）。chrome://flags の「WebXR experiments」が有効なら自動。</p></div>
-    <div id="stickWrap"><label for="stickmode">スティックの割り当て（全ワールド共通）</label><select id="stickmode"><option value="2">モード2：左＝上昇下降・旋回 / 右＝前後・左右</option><option value="1">モード1：左＝前後・旋回 / 右＝上昇下降・左右</option></select>
-      <label for="windsel" style="margin-top:10px">風（VR）</label><select id="windsel"><option value="0">無風</option><option value="1">弱（自然 平均 1.0 m/s・試験場 0.3 m/s・既定）</option><option value="2">中（自然 平均 2.5 m/s・試験場 0.8 m/s）</option></select></div>
-    <button id="btn" type="button">MRを開始</button>
-    <p id="msg"></p>
-    <p id="ver"></p>
-  </div>
+    <h2 class="sr" id="menuHead">プレイ方法を選ぶ</h2>
+    <div id="modeGrid" class="grid" role="group" aria-labelledby="menuHead">
+      <button type="button" class="mode" data-mode="mr">
+        <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path d="M8 30 32 10l24 20"/><path d="M14 26v28h36V26"/><circle cx="26" cy="39" r="3.5"/><circle cx="38" cy="39" r="3.5"/><path d="M29.5 39h5M26 35.5V33M38 35.5V33"/></svg>
+        <span class="tx"><span class="nm">部屋で飛ばす（MR）</span><span class="ds">現実の部屋にドローンが現れます</span></span><span class="last" hidden>前回</span>
+      </button>
+      <button type="button" class="mode" data-mode="nature">
+        <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path d="M5 52 24 22l10 16 8-10 17 24Z"/><path d="M19 31l5 4 5-4"/><circle cx="48" cy="12" r="5"/></svg>
+        <span class="tx"><span class="nm">自然の中を飛ぶ（VR）</span><span class="ds">草原や湖の上を自由に飛行</span></span><span class="last" hidden>前回</span>
+      </button>
+      <button type="button" class="mode" data-mode="exam">
+        <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path d="M13 54 19 30l6 24Z"/><path d="M9 54h20M35 54l6-24 6 24ZM31 54h20"/><path d="M5 20c12 8 20-8 32-2s14 4 22-2" stroke-dasharray="4 4"/><path d="M53 36h8v8h-8zM57 36v8M53 40h8"/></svg>
+        <span class="tx"><span class="nm">実地試験の練習（VR）</span><span class="ds">一等・二等の実技6科目を練習</span></span><span class="last" hidden>前回</span>
+      </button>
+      <button type="button" class="mode" data-mode="mrexam">
+        <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false"><path d="M5 54 18 32h40L45 54Z"/><path d="M12 43h40M27 32l-4 22M38 32l-2 22M48 32l1 22" stroke-width="1.8"/><path d="M32 12l5 22H27Z"/><path d="M24 34h16"/></svg>
+        <span class="tx"><span class="nm">実地試験の練習（MR）</span><span class="ds">部屋の床にコースを描いて練習</span></span><span class="last" hidden>前回</span>
+      </button>
+      <button type="button" class="mode" data-mode="multi">
+        <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false"><circle cx="22" cy="20" r="7"/><circle cx="44" cy="23" r="6"/><path d="M7 54c0-12 7-18 15-18s15 6 15 18"/><path d="M40 37c2-1 3-1.500 5-1.500 7 0 13 6 13 18"/></svg>
+        <span class="tx"><span class="nm">みんなで飛ぶ</span><span class="ds">同じルーム名で複数人が参加</span></span><span class="last" hidden>前回</span>
+      </button>
+      <button type="button" class="mode" data-mode="watch">
+        <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false"><rect x="7" y="11" width="50" height="33" rx="3"/><path d="M23 54h18M32 44v10"/><path d="M14 36l9-8 7 5 12-12"/></svg>
+        <span class="tx"><span class="nm">PCで観戦</span><span class="ds">ルームの全員の飛行を表示</span></span><span class="last" hidden>前回</span>
+      </button>
+    </div>
+    <div class="links"><button type="button" id="keysBtn" class="link">操作一覧</button><span id="ver"></span></div>
+  </main>
+  <section id="scrDetail" class="card wide pane" hidden aria-labelledby="dTitle">
+    <div class="body">
+      <p class="kind" id="dKind"></p>
+      <h2 id="dTitle" tabindex="-1"></h2>
+      <div class="cols">
+        <div class="col">
+          <div id="dDesc" class="desc"></div>
+          <h3>必要なもの・注意</h3>
+          <ul id="dNeed"></ul>
+          <div id="dSet">
+            <h3>設定</h3>
+            <div class="fields">
+              <div id="nameWrap"><label for="pilotname">受験者名（試験場・MR試験の記録を名前ごとに分けます。空欄は「ゲスト」）</label><input id="pilotname" type="text" maxlength="16" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ゲスト"></div>
+              <div id="roomWrap"><label for="room">ルーム名（必須）</label><input id="room" type="text" maxlength="40" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="ルーム名" aria-describedby="roomHint" aria-required="true">
+                <p id="roomHint"></p></div>
+              <div id="stickWrap"><label for="stickmode">スティックの割り当て（全ワールド共通）</label><select id="stickmode"><option value="2">モード2：左＝上昇下降・旋回 / 右＝前後・左右</option><option value="1">モード1：左＝前後・旋回 / 右＝上昇下降・左右</option></select></div>
+              <div id="windWrap"><label for="windsel">風（VR）</label><select id="windsel"><option value="0">無風</option><option value="1">弱（自然 平均 1.0 m/s・試験場 0.3 m/s・既定）</option><option value="2">中（自然 平均 2.5 m/s・試験場 0.8 m/s）</option></select></div>
+            </div>
+          </div>
+        </div>
+        <div class="col">
+          <h3 id="dCtlH">主な操作</h3>
+          <table id="dCtl" aria-labelledby="dCtlH"><thead><tr><th scope="col" id="dCtlTh1">ボタン</th><th scope="col">機能</th></tr></thead><tbody></tbody></table>
+          <p id="dCtlNote" class="note"></p>
+        </div>
+      </div>
+    </div>
+    <div class="foot"><p id="msg" role="status" aria-live="polite"></p><button id="back" type="button" class="sec">← 戻る</button><button id="btn" type="button" class="pri"></button></div>
+  </section>
+  <section id="scrKeys" class="card wide pane" hidden aria-labelledby="kTitle">
+    <div class="body"><h2 id="kTitle">操作一覧</h2><div id="kBody"></div></div>
+    <div class="foot"><button id="kBack" type="button" class="sec">← 戻る</button></div>
+  </section>
 </div>
 <div id="roster" hidden></div>
 <script type="module">
 import * as THREE from 'three';
 
-const APP_VERSION = 'v1.0';                                    // 開始画面に表示するビルド識別子
+const APP_VERSION = 'v1.1';                                    // 開始画面に表示するビルド識別子
 const DEBUG = new URLSearchParams(location.search).has('debug');
 const NAT_SWAY_Q = new URLSearchParams(location.search).get('sway') === '1';   // ?sway=1: 自然の樹木の揺れ (頂点シェーダーの差し替え) を有効にする。既定は無効 (C.NAT_TREE_SWAY)
-const START_WORLD = (() => { const w = new URLSearchParams(location.search).get('world'); return w === 'mrexam' ? 3 : w === 'exam' ? 2 : w === 'vr' ? 1 : 0; })();   // ?world=vr: 自然ワールドで開始 / ?world=exam: 試験場で開始 / ?world=mrexam: MR試験で開始 (既定はMR)
+/* 開始画面のURL指定。?mode=mr|nature|exam|mrexam|multi|watch / ?world=vr|exam|mrexam (従来どおり。mr 以外の値はMR) / ?room= (みんなで。PCでは観戦)。
+ * ?mode= か ?world= がある時だけ、読み込み時に黙って開始を試みる (ない時はプレイ方法の選択画面)。?room= だけなら みんなで / 観戦 の説明画面を開いてルーム名を入れておく。 */
+const START_MODES = Object.freeze(['mr', 'nature', 'exam', 'mrexam', 'multi', 'watch']);
+const MODE_WORLD = Object.freeze({ mr: 0, nature: 1, exam: 2, mrexam: 3, multi: 0, watch: 0 });   // プレイ方法 → 開始するワールド (0=MR 1=自然 2=試験場 3=MR試験)
+const URL_START = (() => {
+  let q; try { q = new URLSearchParams(location.search); } catch (e) { q = new URLSearchParams(''); }
+  const m = q.get('mode'), w = q.get('world'), modeParam = START_MODES.includes(m) ? m : null, hasWorld = w !== null;
+  const wid = w === 'mrexam' ? 3 : w === 'exam' ? 2 : w === 'vr' ? 1 : 0;
+  const mode = modeParam || (hasWorld ? (wid === 3 ? 'mrexam' : wid === 2 ? 'exam' : wid === 1 ? 'nature' : 'mr') : null);
+  return { mode, modeParam, hasWorld, world: hasWorld ? wid : mode ? MODE_WORLD[mode] : 0, room: (q.get('room') || '').slice(0, 40), explicit: !!(modeParam || hasWorld) };
+})();
+let START_WORLD = URL_START.world;                              // 最初に入るワールド。開始ボタンを押した時にプレイ方法のワールドへ上書きする
 
 /* =====================================================================
  * 1. 定数 (チューニングパラメータ)
@@ -6821,6 +6939,7 @@ function readXRInputs(session, xrFrame, ref) {
 const keys = new Set();
 window.addEventListener('keydown', (e) => {
   if (renderer.xr.isPresenting) return;
+  if (!startEl.classList.contains('hidden')) return;         // 開始画面が出ている間のキー (Tab / Enter / Space / Esc) は画面の操作。裏のプレビューを動かさない
   if (e.target && e.target.tagName === 'INPUT') return;      // ルーム名入力中のキーは操縦に使わない
   if (spec.on) { if (!e.repeat) specKey(e); return; }        // PC観戦モードのキー
   if (e.code.startsWith('Arrow')) e.preventDefault();
@@ -7105,10 +7224,9 @@ function onXREnd() {
   renderer.domElement.style.display = 'none';
   resetWorld();
   hud.leftGrip = null; placeHud();
-  startEl.classList.remove('hidden');
-  btn.disabled = false;
-  msgEl.textContent = 'セッションを終了しました。';
+  uiSessionEnded();                                          // 開始画面へ戻る: 遊んだプレイ方法の説明画面 (「← 戻る」でメニューへ)
 }
+let uiSessionEnded = () => { startEl.classList.remove('hidden'); btn.disabled = false; msgEl.textContent = 'セッションを終了しました。'; };   // boot が開始画面の本体に差し替える
 
 window.addEventListener('resize', () => {
   if (spec.on) { spec.vw = -1; specLayout(); return; }       // 観戦モードは名簿を除いた領域に描く
@@ -8420,8 +8538,62 @@ if (DEBUG) {
   };
 }
 
+/* =====================================================================
+ * 21. 開始画面 (プレイ方法の選択 → 説明 → 開始)
+ *   ・画面は 3 つ: menu (プレイ方法のカード) / detail (選んだ方法の説明と設定。ここの「開始」ボタンだけがセッションを始める) / keys (操作一覧)。
+ *   ・ソロのプレイ方法はルーム名を渡さない (保存済みのルーム名があっても通信コードは一切動かない)。ルーム名の欄は みんなで / 観戦 の説明画面だけにある。
+ *   ・表示する文字は全て textContent で入れる (innerHTML は使わない)。
+ * ===================================================================== */
+const uiEl = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const uiStickRows = (sm) => (sm === 1
+  ? [['左スティック', '前後・旋回'], ['右スティック', '上昇下降・左右']]
+  : [['左スティック', '上昇下降・旋回'], ['右スティック', '前後・左右']]);
+const UI_SWITCH = ['右スティック長押し（0.5秒）', 'ワールド切替（MR → MR試験 → 自然 → 試験場 → MR）'];
+const UI_HAND = 'コントローラーなし（ハンドトラッキング）の場合は自動モードで飛行します。ピンチで離着陸。';
+const UI_WARN_VR = 'VRでは周囲が見えません。その場から動かずに操作してください';
+const UI_NET_NEED = ['同じ Wi-Fi（同じネットワーク）につないだ端末どうしで飛ばします。', '全員が同じルーム名を入力してください（大文字小文字・空白も同じに）。'];
+const UI_KB_EXAM = [['T', '始動 → ↑ で離陸'], ['Y', '科目の切替'], ['M', 'お手本'], ['G', '本番 / 補助表示'], ['U', 'やり直し'], ['K', '位置安定 ON/OFF（フリー練習）'], ['B', '記録ボード'], ['P', '直前の飛行を再生（Space=再生/停止 ←→=送り ↑↓=速さ E/Q=次/前の出来事 O=お手本 Esc=終了）']];
+const UI_KB_MR = [['WASD', '前後左右'], ['矢印キー', '上下・旋回'], ['T', '離着陸'], ['M', '自動 ⇄ 手動'], ['R', '呼び戻し'], ['H', 'HUD表示'], ['V', 'ドローン視点'], ['N', 'ワールド切替'], ['ドラッグ', '視点']];
+const UI_KB_VIEW = [['ドラッグ', '回転'], ['ホイール', 'ズーム'], ['右ドラッグ / Shift+ドラッグ', '移動'], ['F', '全体表示'], ['T', '真上'], ['N', 'MR部屋 → VR自然 → 試験場の表示切替'], ['1〜9, 0 / 名簿の行', '追尾'], ['Esc', '追尾解除']];
+const UI_MR_ROWS = [['A', '自動 ⇄ 手動の切替'], ['B', '離陸 / 着陸'], ['右トリガー長押し', '手元へ呼び戻し'], ['X', 'HUD表示の切替'], ['左トリガー', 'ドローン視点のモニター'], UI_SWITCH];
+const UI_NAT_ROWS = [['B', '離陸 / 着陸'], ['A', '自動 ⇄ 手動の切替（位置安定OFF中は手動のみ）'], ['左トリガー', '位置安定 ON/OFF（既定ON。OFFだと止まらず風に流されます）'], ['左Y', '風の強さ（無風 → 弱 → 中）'], ['左スティック押込み', '視点切替（操縦者目線 ⇄ 一人称）'], ['右トリガー長押し', '手元へ呼び戻し'], ['X', 'HUD表示の切替'], UI_SWITCH];
+const UI_EXAM_ROWS = [['B', 'モーター始動 / 停止（スロットルで離陸・降下し、接地すれば着陸）'], ['左Y', '科目の切替'], ['A', 'お手本飛行'], ['左トリガー', '本番 / 補助表示（長押しでやり直し）'], ['右トリガー（短押し）', '直前の飛行を再生（着陸してモーターを止めている時）'], ['左X 1秒長押し', '記録ボード（着陸してモーターを止めている時）'], UI_SWITCH];
+const UI_MRX_ROWS = [['右トリガー', '配置: 今の立ち位置と向きでコースを置く'], ['左Y', '配置中は縮尺 / 配置後は科目'], ['左スティック左右', '配置中: 科目の切替'], ['右スティック', '配置中: 位置の微調整（右グリップを押しながら左右 = 向き）'], ['右トリガー1秒長押し', '配置し直し（モーター停止中）'], ['B', 'モーター始動 / 停止'], ['A', 'お手本飛行'], ['左トリガー', '本番 / 補助表示（長押しでやり直し）'], UI_SWITCH];
+const UI_MULTI_ROWS = UI_MR_ROWS.slice(0, 5).concat([['左Y', '位置合わせの開始 / 中止（1.5秒長押しで解除）'], ['右トリガー', '位置合わせ中: 点を記録'], UI_SWITCH]);
+
+/** プレイ方法の定義。world = 開始するワールド / room = ルーム名を使う (みんなで・観戦) / fields = 説明画面に出す設定 (XR端末) / pcFields = PC。
+ *  ctl(sm) = 主な操作 (sm = スティックのモード 1|2)。more = 操作一覧だけに出す追加の行。 */
+const UI_MODES = {
+  mr: { kind: 'MR', world: 0, room: false, fields: ['stick'], pcFields: [], start: 'MRを開始',
+    desc: ['Quest のパススルーで、現実の部屋に仮想のドローンが現れます。', '自動モードでは部屋の中を自由に飛び回り、手動モードではコントローラーで操縦します。', '壁や天井、あなたの頭を避けて飛びます。左トリガーでドローン視点のモニターも出せます。'],
+    need: ['広めの場所で、周囲の安全を確認してから開始してください。', '部屋の壁や床が認識されない時は、左スティック押込みで「スペース設定」を開けます。', UI_HAND],
+    ctl: (sm) => uiStickRows(sm).concat(UI_MR_ROWS), kb: UI_KB_MR, more: [] },
+  nature: { kind: 'VR', world: 1, room: false, fields: ['stick', 'wind'], pcFields: ['wind'], start: 'VRを開始',
+    desc: ['草原と湖と森が広がる景色の中を、VRで自由に飛行します。', '離着陸場に立って機体を目で追う「操縦者目線」と、機体からの「一人称」を切り替えられます。', '風の強さと位置安定（ON/OFF）で、飛ばし心地を変えられます。'],
+    need: [UI_WARN_VR, '広めの場所で、周囲の安全を確認してから開始してください。', '酔いやすい人は、操縦者目線（既定）で飛ばしてください。', UI_HAND],
+    ctl: (sm) => uiStickRows(sm).concat(UI_NAT_ROWS), kb: UI_KB_MR.concat([['G', '位置安定 ON/OFF'], ['Y', '風の強さ（無風 → 弱 → 中）'], ['C', '視点（操縦者目線 ⇄ 一人称）']]), more: [] },
+  exam: { kind: 'VR', world: 2, room: false, fields: ['name', 'stick', 'wind'], pcFields: ['name', 'wind'], start: 'VRを開始',
+    desc: ['無人航空機操縦士（一等・二等）の実地試験で出される6科目を、VRの練習場で練習します。', '地面に立ち、試験員の指示（音声と字幕）に従って飛ばします。', '判定のある試験は 1 回ごとに記録され、終了後に自動のアドバイスが出ます（公式の採点・指導ではありません）。'],
+    need: [UI_WARN_VR, 'コントローラーが必要です。', '記録は受験者名ごとに分かれます（空欄は「ゲスト」）。', '広めの場所で、周囲の安全を確認してから開始してください。'],
+    ctl: (sm) => uiStickRows(sm).concat(UI_EXAM_ROWS), kb: UI_KB_EXAM,
+    more: [['左Y長押し', 'フリー練習: 位置安定 ON/OFF'], ['A', 'フリー練習: 風の強さ'], ['再生中', '右スティック左右 = 送り / 上下 = 速さ / A = 次の減点 / 左Y = 前の出来事 / 左トリガー = お手本 / B = 終了'], ['記録ボード中', '右スティック左右 = ページ / 上下 = 選択 / 右トリガー = 再生 / B = 閉じる']] },
+  mrexam: { kind: 'MR', world: 3, room: false, fields: ['name', 'stick', 'wind'], pcFields: ['name', 'wind'], start: 'MRを開始',
+    desc: ['現実の部屋の床に、実地試験の6科目のコースを縮尺（原寸・3/4・1/2・1/3）で描き、立った位置から目視で飛ばして練習します。', '受験者の位置に立ってコースの正面を向き、右トリガーで配置します。', '判定と記録は試験場（VR）と同じです。'],
+    need: ['必要な広さ: 原寸 21m×15m、3/4 で 15.75m×11.25m、1/2 で 10.5m×7.5m、1/3 で 7m×5m。', 'コントローラーが必要です。', '壁や家具に重なると、赤い枠と警告が出ます。', '広めの場所で、周囲の安全を確認してから開始してください。'],
+    ctl: (sm) => uiStickRows(sm).concat(UI_MRX_ROWS), kb: [['Enter', '配置（長押しで配置し直し）'], ['[ ]', '縮尺'], [', .', '科目']].concat(UI_KB_EXAM, [['矢印キー / WASD', '飛行（試験場と同じ）']]),
+    more: [['HUD', '高度と速度は本番の寸法に換算した値（実寸は小さく併記）']] },
+  multi: { kind: 'MR', world: 0, room: true, fields: ['room', 'stick'], pcFields: ['room'], start: 'MRを開始',
+    desc: ['同じルーム名を入れた人どうしで、同じ空間に複数のドローンを一緒に飛ばします。', 'それぞれが自分のドローンを操縦し、他の人の機体も見えます。', 'まずMRで始まります。飛行中に右スティック長押しで、自然・試験場にも切り替えられます。'],
+    need: UI_NET_NEED.concat(['位置合わせ（MR）: 全員が Y ボタンで開始し、同じ2点を同じ順に右トリガーで記録します。Chrome の chrome://flags で「WebXR experiments」が有効なら自動で合います（実験機能）。', 'VRワールド（自然・試験場）に切り替えれば、位置合わせは不要です。', '広めの場所で、周囲の安全を確認してから開始してください。']),
+    ctl: (sm) => uiStickRows(sm).concat(UI_MULTI_ROWS), kb: UI_KB_VIEW, more: [],
+    pcNeed: UI_NET_NEED.concat(['PCからは飛行に参加できません。ルーム名を入れると観戦になります（自機は飛ばしません）。']) },
+  watch: { kind: 'PC', world: 0, room: true, fields: ['room'], pcFields: ['room'], start: '観戦を開始',
+    desc: ['PCからルームに入り、参加者全員のドローンを3Dと名簿で見る観戦専用のモードです。', '自機は飛ばしません。名簿の行を押すと、その機体を追いかけます。'],
+    need: UI_NET_NEED.concat(['Quest 側が同じルーム名で参加していると、名簿に出ます。']), ctl: () => [], kb: UI_KB_VIEW, more: [] },
+};
+
 (async function boot() {
-  const ROOM_KEY = 'mrdrone.room';
+  const ROOM_KEY = 'mrdrone.room', MODE_KEY = 'mrdrone.mode';
   document.getElementById('ver').textContent = APP_VERSION;
   const roomEl = document.getElementById('room');
   const nameEl = document.getElementById('pilotname');       // 受験者名: ?name= → 前回の値 → ゲスト。入力のたびに保存 (ストレージ不可でも動く)
@@ -8429,15 +8601,14 @@ if (DEBUG) {
     if (!nm) { try { nm = localStorage.getItem('mrdrone.pilotname') || ''; } catch (e) { nm = ''; } }
     nameEl.value = nm ? recNameClean(nm) === REC_GUEST ? '' : recNameClean(nm) : ''; recSetProfile(nm, false); }
   nameEl.addEventListener('input', () => { recSetProfile(nameEl.value, true); });
-  let roomInit = '';
-  try { roomInit = new URLSearchParams(location.search).get('room') || ''; } catch (e) { roomInit = ''; }            // ?room= を優先
-  if (!roomInit) { try { roomInit = localStorage.getItem(ROOM_KEY) || ''; } catch (e) { roomInit = ''; } }          // 次に前回の値 (ストレージ不可でも動く)
+  let roomInit = URL_START.room;                                                                                      // ?room= を優先
+  if (!roomInit) { try { roomInit = localStorage.getItem(ROOM_KEY) || ''; } catch (e) { roomInit = ''; } }          // 次に前回の値 (ストレージ不可でも動く)。使うのは みんなで / 観戦 の時だけ
   roomEl.value = roomInit.slice(0, 40);
   const stickEl = document.getElementById('stickmode');       // スティックのモード: ?sticks= → 前回の値 → 2。選び直したら保存 (ストレージ不可でも動く)
   { let sm = ''; try { sm = new URLSearchParams(location.search).get('sticks') || ''; } catch (e) { sm = ''; }
     if (sm !== '1' && sm !== '2') { try { sm = localStorage.getItem('mrdrone.sticks') || ''; } catch (e) { sm = ''; } }
     stickMode = sm === '1' ? 1 : 2; stickEl.value = String(stickMode); }
-  stickEl.addEventListener('change', () => { stickMode = stickEl.value === '1' ? 1 : 2; hud.hudInit = false; try { localStorage.setItem('mrdrone.sticks', String(stickMode)); } catch (e) { /* ignore */ } });
+  stickEl.addEventListener('change', () => { stickMode = stickEl.value === '1' ? 1 : 2; hud.hudInit = false; try { localStorage.setItem('mrdrone.sticks', String(stickMode)); } catch (e) { /* ignore */ } if (cur) renderCtl(); });
   const windEl = document.getElementById('windsel');         // 試験場の風: ?wind=0|1|2 → 前回の値 → 弱。選び直したら保存
   { let wv = ''; try { wv = new URLSearchParams(location.search).get('wind') || ''; } catch (e) { wv = ''; }
     if (exWindLv(wv) < 0) { try { wv = localStorage.getItem('mrdrone.wind') || ''; } catch (e) { wv = ''; } }
@@ -8448,38 +8619,156 @@ if (DEBUG) {
 
   let supported = false;
   try { supported = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-ar')); } catch (e) { supported = false; }
+
+  // ---------- 画面 ----------
+  const $ = (id) => document.getElementById(id);
+  const scr = { menu: $('scrMenu'), detail: $('scrDetail'), keys: $('scrKeys') };
+  const cards = Array.from(document.querySelectorAll('#modeGrid .mode'));
+  const cardOf = (id) => cards.find((c) => c.dataset.mode === id) || null;
+  const nameOf = (id) => { const c = cardOf(id); const n = c && c.querySelector('.nm'); return n ? n.textContent : id; };
+  const dTitle = $('dTitle'), dKind = $('dKind'), dDesc = $('dDesc'), dNeed = $('dNeed'), dCtl = $('dCtl'), dCtlNote = $('dCtlNote'), dCtlH = $('dCtlH'), dCtlTh1 = $('dCtlTh1'), dSet = $('dSet');
+  const roomHint = $('roomHint'), backBtn = $('back');
+  const wraps = { name: $('nameWrap'), room: $('roomWrap'), stick: $('stickWrap'), wind: $('windWrap') };
+  let cur = null, screen = 'menu', starting = false;
+  const isPC = !supported;
+  if (supported) { const wc = cardOf('watch'); if (wc) wc.hidden = true; }   // 観戦はPC専用 (Quest では出さない)
+  const fieldsOf = (id) => (isPC ? UI_MODES[id].pcFields : UI_MODES[id].fields);
+  const needsRoom = (id) => !!id && UI_MODES[id].room;
+  const startLabel = (id) => (isPC ? (UI_MODES[id].room ? '観戦を開始' : 'PCプレビューを開始') : UI_MODES[id].start);
+  const worldFor = (id) => (id === 'multi' && URL_START.hasWorld ? URL_START.world : UI_MODES[id].world);   // みんなで は MR から (URLに ?world= があればそのワールド)
+
+  let lastMode = '';
+  try { const lm = localStorage.getItem(MODE_KEY); if (START_MODES.includes(lm) && !(lm === 'watch' && supported)) lastMode = lm; } catch (e) { lastMode = ''; }
+  const rememberMode = (id) => { lastMode = id; try { localStorage.setItem(MODE_KEY, id); } catch (e) { /* ignore */ } };
+  const lastCard = () => { const c = cardOf(lastMode); return c && !c.hidden ? c : null; };
+  for (const c of cards) { const b = c.querySelector('.last'); if (b) b.hidden = c !== lastCard(); }
+
+  const showScreen = (name) => {
+    screen = name;
+    for (const k of Object.keys(scr)) scr[k].hidden = k !== name;
+    startEl.scrollTop = 0;
+  };
+  const focusMenu = () => { const c = lastCard() || cards.find((x) => !x.hidden); if (c) c.focus({ preventScroll: true }); };
+  const syncStart = () => {                                  // 開始ボタンの有効/無効 (開始処理中・ルーム名が必須なのに空)
+    const need = needsRoom(cur), empty = need && !currentRoom();
+    btn.disabled = starting || empty;
+    roomHint.textContent = empty ? 'ルーム名を入力すると開始できます。' : '全員が同じルーム名を入力してください。';
+    roomHint.className = empty ? 'need' : '';
+  };
+  function renderCtl() {                                     // 主な操作の表 (スティックのモードに合わせた文言)
+    const m = UI_MODES[cur], tb = dCtl.querySelector('tbody'); tb.textContent = '';
+    const rows = isPC ? m.kb : m.ctl(stickMode);
+    dCtlH.textContent = isPC ? '主な操作（キーボード）' : '主な操作';
+    dCtlTh1.textContent = isPC ? 'キー' : 'ボタン';
+    for (const r of rows) { const tr = uiEl('tr'); tr.appendChild(uiEl('th', '', r[0])).scope = 'row'; tr.appendChild(uiEl('td', '', r[1])); tb.appendChild(tr); }
+    dCtl.hidden = rows.length === 0;
+    dCtlH.hidden = rows.length === 0;
+    dCtlNote.textContent = isPC ? 'ドラッグ=視点。PCプレビューは操作の確認用です。' : (cur === 'multi' ? '位置合わせはMRの時だけ必要です。' : '');
+  }
+  function openMode(id) {
+    cur = id; const m = UI_MODES[id];
+    dTitle.textContent = nameOf(id);
+    dKind.textContent = isPC ? (m.room ? 'PC' : 'PCプレビュー') : m.kind;
+    dDesc.textContent = ''; for (const l of m.desc) dDesc.appendChild(uiEl('p', '', l));
+    if (isPC && !m.room) dDesc.appendChild(uiEl('p', '', 'この環境は WebXR の immersive-ar（ARモード）に対応していないため、PCプレビューで動作を確認できます。'));
+    dNeed.textContent = '';
+    for (const l of (isPC && m.pcNeed ? m.pcNeed : m.need)) dNeed.appendChild(uiEl('li', l === UI_WARN_VR ? 'warn' : '', l));
+    renderCtl();
+    const f = fieldsOf(id);
+    for (const k of Object.keys(wraps)) wraps[k].hidden = !f.includes(k);
+    dSet.hidden = f.length === 0;
+    btn.textContent = startLabel(id);
+    syncStart();
+    scr.detail.classList.toggle('roomfirst', needsRoom(id));
+    showScreen('detail');
+  }
+  const focusDetail = () => { if (!btn.disabled) btn.focus({ preventScroll: true }); else dTitle.focus({ preventScroll: true }); };
+  const backToMenu = () => { if (starting) return; msgEl.textContent = ''; showScreen('menu'); const c = cardOf(cur); if (c && !c.hidden) c.focus({ preventScroll: true }); else focusMenu(); };
+  for (const c of cards) c.addEventListener('click', () => { msgEl.textContent = ''; openMode(c.dataset.mode); focusDetail(); });
+  backBtn.addEventListener('click', backToMenu);
+  roomEl.addEventListener('input', () => { if (cur) syncStart(); });
+
+  // ---------- 操作一覧 ----------
+  function renderKeys() {
+    const body = $('kBody'); body.textContent = '';
+    const sec = (title, rows, notes) => {
+      const s = uiEl('section'); s.appendChild(uiEl('h3', '', title));
+      if (rows && rows.length) { const t = uiEl('table'), tb = uiEl('tbody'); for (const r of rows) { const tr = uiEl('tr'); tr.appendChild(uiEl('th', '', r[0])).scope = 'row'; tr.appendChild(uiEl('td', '', r[1])); tb.appendChild(tr); } t.appendChild(tb); s.appendChild(t); }
+      for (const n of (notes || [])) s.appendChild(uiEl('p', 'note', n));
+      body.appendChild(s);
+    };
+    body.appendChild(uiEl('p', '', '現在のスティックの割り当て: モード' + stickMode + '（説明画面の「スティックの割り当て」で変えられます）。'));
+    sec('共通（全ワールド）', uiStickRows(stickMode).concat([['右スティック長押し（0.5秒）', 'ワールド切替（MR → MR試験 → 自然 → 試験場 → MR）'], ['左スティック押込み', 'VR: 視点切替（操縦者目線 ⇄ 一人称） / MR: 平面が無い時はスペース設定']]), [UI_HAND]);
+    sec(nameOf('mr'), UI_MR_ROWS.slice(0, 5).concat(UI_MODES.mr.more), ['ドローン視点のモニターは左トリガーで出し入れします。']);
+    sec(nameOf('nature'), UI_NAT_ROWS.slice(0, 7), ['位置安定をOFFにすると、止まらず風に流されます。自動飛行と帰還は使えません。']);
+    sec(nameOf('exam'), UI_EXAM_ROWS.slice(0, 6).concat(UI_MODES.exam.more), ['試験員の指示（音声と字幕）に従って飛ばします。判定のある試験は 1 回ごとに記録され、終了後に自動のアドバイスが出ます（公式の採点・指導ではありません）。名前は説明画面の「受験者名」で記録を分けます。']);
+    sec(nameOf('mrexam'), UI_MRX_ROWS.slice(0, 8), ['MR試験: 床にコースを縮尺で描きます。必要な広さは原寸で幅21m×奥行15m（1/2 なら 10.5m×7.5m、1/3 なら 7m×5m）。HUDの高度と速度は本番の寸法に換算した値（実寸は小さく併記）です。壁や家具に重なると赤い枠と警告が出ます。コントローラーが必要です。']);
+    sec(nameOf('multi'), [['左Y', '位置合わせの開始 / 中止（1.5秒長押しで手動の位置合わせを解除）'], ['右トリガー', '位置合わせ中: 点を記録（全員が同じ2点を同じ順に）']], ['VRワールド（自然・試験場）では位置合わせは不要です。chrome://flags の「WebXR experiments」が有効なら、位置合わせは自動です。']);
+    sec('PCプレビュー（キーボード）', UI_KB_MR, ['自然: G=位置安定 ON/OFF  Y=風の強さ / MR試験: Enter=配置（長押しで配置し直し） [ ]=縮尺  , .=科目']);
+    sec('試験場・MR試験（キーボード）', UI_KB_EXAM, []);
+    sec('PCで観戦（キーボード・マウス）', UI_KB_VIEW, []);
+  }
+  $('keysBtn').addEventListener('click', () => { renderKeys(); showScreen('keys'); $('kBack').focus({ preventScroll: true }); });
+  $('kBack').addEventListener('click', () => { showScreen('menu'); const k = $('keysBtn'); k.focus({ preventScroll: true }); });
+  startEl.addEventListener('keydown', (e) => {                // Esc: 説明画面 / 操作一覧 → メニュー
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if (screen === 'detail') { e.preventDefault(); backToMenu(); }
+    else if (screen === 'keys') { e.preventDefault(); showScreen('menu'); $('keysBtn').focus({ preventScroll: true }); }
+  });
+
+  // ---------- 開始 ----------
+  uiSessionEnded = () => {                                    // セッション終了: 遊んだプレイ方法の説明画面へ (メニューではない)
+    startEl.classList.remove('hidden'); starting = false;
+    if (cur) openMode(cur); else { showScreen('menu'); syncStart(); }
+    msgEl.textContent = 'セッションを終了しました。';
+    focusDetail();
+  };
   if (supported) {
-    let starting = false;
     const go = async (silent) => {
-      if (starting || renderer.xr.isPresenting) return;
-      starting = true; btn.disabled = true; msgEl.textContent = '';
-      const roomName = commitRoom();                          // 空ならソロ (通信コードは一切動かない)
+      if (starting || renderer.xr.isPresenting || !cur) return;
+      if (needsRoom(cur) && !currentRoom()) { if (!silent) msgEl.textContent = 'ルーム名を入力してください。'; return; }
+      starting = true; syncStart(); msgEl.textContent = '';
+      const roomName = needsRoom(cur) ? commitRoom() : '';    // ソロは常に空 (通信コードは一切動かない。保存済みのルーム名も使わない)
+      rememberMode(cur);
+      START_WORLD = worldFor(cur);                            // 開始するワールド (placeDroneInitial が ?world= と同じ経路で入る)
       initAudio();                                            // ユーザー操作内で開始
-      try { await startXR(roomName); }
+      try { await startXR(roomName); }                        // ← ここまで await は無い: requestSession はボタンの click の中で同期に呼ばれる
       catch (err) {
-        stopAudio(); btn.disabled = false;
+        stopAudio(); starting = false; syncStart();
         if (err && err.needTap) msgEl.textContent = XR_TAP_MSG[err.feat] || XR_TAP_MSG.shared;
-        else if (!silent) msgEl.textContent = 'MRを開始できませんでした: ' + (err && err.message ? err.message : err);
+        else if (!silent) msgEl.textContent = UI_MODES[cur].start.replace('を開始', '') + 'を開始できませんでした: ' + (err && err.message ? err.message : err);
       }
       starting = false;
     };
-    // 開始画面のどこを押しても開始 (ボタンを狙わなくてよい)。ただしルーム名の入力欄とそのラベルは除く。
-    startEl.addEventListener('click', (e) => { if (e.target && e.target.closest && e.target.closest('#nameWrap, #roomWrap, #stickWrap')) return; go(false); });
-    // アプリとして起動された場合など、操作なしで開始できる環境ではそのままMRに入る。不可なら黙ってボタン待ち。
-    go(true);
+    // 「開始」ボタンだけがセッションを始める (画面のどこを押しても開始、は廃止。読んでから始められる)。
+    btn.addEventListener('click', () => { go(false); });
+    // ?mode= / ?world= がある時だけ、操作なしで開始できる環境 (アプリとして起動された場合など) ではそのまま入る。不可なら説明画面で開始ボタン待ち。
+    let initial = URL_START.mode;
+    if (URL_START.room && !URL_START.modeParam) initial = 'multi';
+    if (initial === 'watch') initial = null;
+    if (initial) { openMode(initial); if (URL_START.explicit) go(true); else focusDetail(); }
+    else { btn.textContent = startLabel('mr'); showScreen('menu'); focusMenu(); }
   } else {
-    // デスクトッププレビュー (ルーム名があれば観戦モード)
-    const previewMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。PCプレビューで動作確認できます。操作: WASD=前後左右 / 矢印=上下・旋回 / M=自動・手動 / T=離着陸 / R=呼び戻し / H=HUD / V=ドローン視点 / N=ワールド切替（MR→MR試験→自然→試験場） / C=視点 / 自然: G=位置安定 ON/OFF Y=風（無風→弱→中） / 試験場: T=始動→↑で離陸 Y=科目 M=お手本 G=本番/補助表示 U=やり直し K=位置安定（フリー練習） B=記録ボード P=直前の飛行を再生（再生中: Space=再生/停止 ←→=送り ↑↓=速さ E/Q=次/前の出来事 O=お手本 Esc=終了） / MR試験: Enter=配置（長押しで配置し直し） [ ]=縮尺 , .=科目 / ドラッグ=視点';
-    const specMsg = 'この環境は WebXR の immersive-ar（ARモード）に対応していません。ルーム名が入力されているので、PCから観戦できます（自機は飛ばしません）。';
-    const refresh = () => { const r = currentRoom(); btn.textContent = r ? '観戦を開始' : 'PCプレビューを開始'; msgEl.textContent = r ? specMsg : previewMsg; };
-    roomEl.addEventListener('input', refresh); refresh();
+    // デスクトッププレビュー (ルーム名があれば観戦モード)。裏では最初からプレビューが動いている (メニューの背景)
     renderer.domElement.style.display = 'block';
     resetWorld(); placeHud();
     renderer.setAnimationLoop(frame);
     btn.addEventListener('click', () => {
-      const r = commitRoom();
-      if (r) startSpectator(r); else { initAudio(); startEl.classList.add('hidden'); }
+      if (!cur || starting) return;
+      if (needsRoom(cur)) {
+        const r = currentRoom(); if (!r) return;
+        rememberMode(cur); commitRoom(); startSpectator(r);
+      } else {
+        rememberMode(cur);
+        START_WORLD = UI_MODES[cur].world;
+        if (world.id !== START_WORLD) resetWorld();           // 選んだワールドのプレビューで始める (placeDroneInitial が入る)
+        initAudio(); startEl.classList.add('hidden');
+      }
     });
+    let initial = URL_START.mode;
+    if (URL_START.room && !URL_START.modeParam) initial = 'watch';
+    if (initial) { openMode(initial); focusDetail(); }
+    else { btn.textContent = startLabel('mr'); showScreen('menu'); focusMenu(); }
   }
 })();
 </script>
