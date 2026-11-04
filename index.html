@@ -211,7 +211,7 @@
 <script type="module">
 import * as THREE from 'three';
 
-const APP_VERSION = 'v1.1';                                    // 開始画面に表示するビルド識別子
+const APP_VERSION = 'v1.2';                                    // 開始画面に表示するビルド識別子
 const DEBUG = new URLSearchParams(location.search).has('debug');
 const NAT_SWAY_Q = new URLSearchParams(location.search).get('sway') === '1';   // ?sway=1: 自然の樹木の揺れ (頂点シェーダーの差し替え) を有効にする。既定は無効 (C.NAT_TREE_SWAY)
 /* 開始画面のURL指定。?mode=mr|nature|exam|mrexam|multi|watch / ?world=vr|exam|mrexam (従来どおり。mr 以外の値はMR) / ?room= (みんなで。PCでは観戦)。
@@ -282,6 +282,7 @@ const C = Object.freeze({
   VR_PILOT_BACK: 3, VR_SCALE_NEAR: 10, VR_SCALE_FAR: 100, VR_SCALE_MAX: 4,   // 操縦者目線: 自然ワールドの操縦位置 = 自機パッドの外側へ [m] / 遠い機体の拡大 (他機と同じ): 1倍はこの距離以内 [m] → VR_SCALE_FAR 以上で VR_SCALE_MAX 倍
   VR_VIGNETTE: true, VR_VIGNETTE_MAX: 0.55, VR_VIG_SPEED: 8, VR_VIG_YAW: 1.5,   // 酔い対策のビネット: 有効 / 最大の濃さ / 最大になる視点速度 [m/s] / 旋回速度 [rad/s]
   VR_FADE_S: 0.25, VR_HOLD_S: 0.5,         // 切替時の暗転(出/入それぞれ) [s] / 右スティック長押しの時間 [s]
+  EXIT_HOLD: 1.0,                          // 両手のグリップを同時に握り続けて終了メニューを開く時間 [s]
   VR_NEAR: 0.05, VR_FAR: 2500,             // VR中のカメラ範囲 [m] (霧で見えなくなる距離より十分遠く / HUD・暗幕より手前)
   NET_MAX_POS_VR: 400,                     // VRワールドで受信する座標の上限 [m]
   // --- VR自然: 位置安定 (ATTI) と風 (「14b. 自然の位置安定と風」)。風の強さは試験場と同じ3段階 (EX_WIND_DEFAULT・開始画面・?wind=) だが、値は自然用 ---
@@ -612,7 +613,7 @@ const pidVx = new PID(3.5, 1.2, 0, 1.5), pidVz = new PID(3.5, 1.2, 0, 1.5), pidV
 // 入力 (スティックは整形済み)
 const input = { lx: 0, ly: 0, rx: 0, ry: 0, recall: false, hasController: false };
 let stickMode = 2;                                           // 1 = モード1 (左: 前後・旋回 / 右: 上昇下降・左右) / 2 = モード2 (既定。左: 上昇下降・旋回 / 右: 前後・左右)。開始画面の選択 (#stickmode) / ?sticks=1|2
-const prevBtn = { A: false, B: false, X: false, L: false, Y: false, RT: false, RTx: false, LS: false };   // Y/RT: ルーム参加時の位置合わせ用
+const prevBtn = { A: false, B: false, X: false, L: false, Y: false, RT: false, RTx: false, LS: false, XRT: false };   // Y/RT: ルーム参加時の位置合わせ用
 
 // ユーザーの頭
 const head = { pos: new THREE.Vector3(0, 1.6, 0), fwd: new THREE.Vector3(0, 0, -1), fwdH: new THREE.Vector3(0, 0, -1), quat: new THREE.Quaternion(), valid: false };
@@ -1113,8 +1114,8 @@ const trunc = (str, n) => { const a = Array.from(str); return a.length > n ? a.s
 function worldLabel() { return world.mrx ? 'MR試験' : world.id === 0 ? 'MR' : world.ex ? (world.cam === 0 ? '試験場・一人称' : '試験場') : (world.cam === 0 ? 'VR・一人称' : 'VR・操縦者目線'); }
 /** 右スティック長押しの進捗 (HUD最下行) */
 function drawHoldBar(x, y, W) {
-  const s = vrHold.step;
-  x.fillStyle = '#ffee66'; fitText(x, ['MR試験へ移動します　', '試験場へ移動します　', 'MRへ戻ります　', '自然の世界へ移動します　'][world.id] + '■'.repeat(s) + '□'.repeat(5 - s), 18, y, W, 19, 12, true);
+  const xs = xit.step > 0, s = xs ? xit.step : vrHold.step;
+  x.fillStyle = '#ffee66'; fitText(x, (xs ? '終了メニューを開きます　' : ['MR試験へ移動します　', '試験場へ移動します　', 'MRへ戻ります　', '自然の世界へ移動します　'][world.id]) + '■'.repeat(s) + '□'.repeat(5 - s), 18, y, W, 19, 12, true);
 }
 
 /** 自然のHUD: 位置安定 ON/OFF (OFF は警告色) と 風の強さ・機体の高さでの風速・機首に対する風向きの矢印 (上 = 機首。矢印の向き = 機体が押される向き) を1行で描く。h = 32。 */
@@ -1181,15 +1182,15 @@ function drawHudNet(x, ctrl, noPlane) {
         if (natHud) {
           fitText(x, 'A=自動/手動  B=離着陸  X=HUD  Y=風  左トリガー=位置安定ON/OFF', 18, 156, W, 16, 11, false);
           fitText(x, '右トリガー長押し=パッドへ帰還　左スティック押込み=視点', 18, 174, W, 16, 11, false);
-          fitText(x, '右スティック長押し=ワールド切替　スティック=モード' + stickMode, 18, 192, W, 16, 11, false);
+          fitText(x, '右スティック長押し=ワールド切替　モード' + stickMode + '　両グリップ長押し＝終了', 18, 192, W, 16, 11, false);
         } else {
           fitText(x, 'A=自動/手動  B=離着陸  X=HUD  スティック=モード' + stickMode, 18, 146, W, 17, 11, false);
-          fitText(x, '右トリガー長押し=パッドへ帰還', 18, 166, W, 17, 12, false);
+          fitText(x, '右トリガー長押し=パッドへ帰還　両グリップ長押し＝終了', 18, 166, W, 17, 12, false);
           fitText(x, '右スティック長押し=ワールド切替　左スティック押込み=視点', 18, 186, W, 17, 11, false);
         }
       } else {
         fitText(x, 'A=自動/手動  B=離着陸  X=HUD  Y=位置合わせ' + (align.kind === 2 ? '(長押し=解除)' : '') + '  モード' + stickMode, 18, 146, W, 17, 11, false);
-        fitText(x, '右トリガー長押し=呼び戻し  左トリガー=ドローン視点', 18, 166, W, 17, 12, false);
+        fitText(x, '右トリガー長押し=呼び戻し  左トリガー=ドローン視点  両グリップ長押し＝終了', 18, 166, W, 17, 11, false);
         fitText(x, '右スティック長押し=ワールド切替　左スティック押込み=視点（VR）', 18, 186, W, 17, 11, false);
       }
     } else {
@@ -1207,7 +1208,7 @@ function drawHudNet(x, ctrl, noPlane) {
       if (net.nWorld > 0) warn = (warn ? warn + '　' : '') + '別ワールド ' + net.nWorld + '台';
     }
     if (warn) { x.fillStyle = '#ffd479'; fitText(x, warn, 18, 208, W, 18, 12, true); }
-    if (vrHold.step > 0) drawHoldBar(x, 230, W);
+    if (vrHold.step > 0 || xit.step > 0) drawHoldBar(x, 230, W);
     else if (natHud && nat.noteT > 0) { x.fillStyle = '#ffd479'; fitText(x, nat.note, 18, 230, W, 18, 12, true); }
     else if (natHud && (ntc || net.status === 'reconnecting')) { x.fillStyle = '#ffd479'; fitText(x, ntc || 'ルームサーバー切断：再接続中…', 18, 230, W, 18, 12, true); }
     else if (cal.msg && now < cal.msgUntil) { x.fillStyle = '#ff9a7a'; fitText(x, cal.msg, 18, 230, W, 18, 12, true); }
@@ -1220,7 +1221,7 @@ function drawHudNat(x, ctrl) {
   drawHudNatStrip(x, 88);
   x.fillStyle = '#b8c6d6'; x.textBaseline = 'top';
   if (ctrl) {
-    fitText(x, 'A=自動/手動  B=離着陸  X=HUD  Y=風', 18, 128, 476, 18, 11, false);
+    fitText(x, 'A=自動/手動  B=離着陸  X=HUD  Y=風　両グリップ長押し＝終了', 18, 128, 476, 18, 11, false);
     fitText(x, '左トリガー=位置安定ON/OFF　右トリガー長押し=パッドへ帰還', 18, 152, 476, 18, 11, false);
     fitText(x, (stickMode === 1 ? 'モード1　左: 上下=前後 左右=旋回　右: 上下=昇降 左右=移動' : 'モード2　左: 上下=昇降 左右=旋回　右: 前後左右=移動'), 18, 176, 476, 18, 11, false);
     fitText(x, '右スティック長押し=ワールド切替　左スティック押込み=視点', 18, 200, 476, 18, 11, false);
@@ -1229,7 +1230,7 @@ function drawHudNat(x, ctrl) {
     x.fillText('ピンチ(選択)で離陸/着陸', 18, 156);
   }
   const ntc = net.notice && performance.now() < net.noticeUntil ? net.notice : '';
-  if (vrHold.step > 0) drawHoldBar(x, 224, 476);
+  if (vrHold.step > 0 || xit.step > 0) drawHoldBar(x, 224, 476);
   else if (nat.noteT > 0) { x.fillStyle = '#ffd479'; fitText(x, nat.note, 18, 224, 476, 19, 12, true); }
   else if (ntc) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText(ntc, 18, 224); }
 }
@@ -1256,7 +1257,7 @@ function drawHud(alt, spd, noPlane, ctrl) {
   if (ctrl) {
     // 凡例は世界ごとに切り替えて行数を抑える (左スティック押込みは MR=スペース設定 / VR=視点)
     fitText(x, (stickMode === 1 ? 'モード1　左: 上下=前後 左右=旋回　右: 上下=昇降 左右=移動' : 'モード2　左: 上下=昇降 左右=旋回　右: 前後左右=移動'), 18, 94, 476, 19, 11, false);
-    fitText(x, 'A=自動/手動  B=離着陸  X=HUD', 18, 118, 476, 19, 12, false);
+    fitText(x, 'A=自動/手動  B=離着陸  X=HUD　両グリップ長押し＝終了', 18, 118, 476, 19, 12, false);
     fitText(x, world.vr ? '右トリガー長押し=パッドへ帰還' : '右トリガー長押し=呼び戻し　左トリガー=ドローン視点', 18, 142, 476, 19, 12, false);
     fitText(x, '右スティック長押し=ワールド切替（MR→MR試験→自然→試験場）', 18, 166, 476, 19, 12, false);
     fitText(x, world.vr ? '左スティック押込み=視点（操縦者目線 / FPV）' : '左スティック押込み=視点（VR）', 18, 190, 476, 19, 12, false);
@@ -1265,7 +1266,7 @@ function drawHud(alt, spd, noPlane, ctrl) {
     x.fillText('ピンチ(選択)で離陸/着陸', 18, 128);
   }
   const ntc = net.notice && performance.now() < net.noticeUntil ? net.notice : '';    // ネットワーク機能が使えなかった時の短い通知 (ソロで飛行は継続)
-  if (vrHold.step > 0) drawHoldBar(x, 224, 476);
+  if (vrHold.step > 0 || xit.step > 0) drawHoldBar(x, 224, 476);
   else if (ntc) { x.fillStyle = '#ffd479'; x.font = '19px sans-serif'; x.fillText(ntc, 18, 226); }
   else if (noPlane) { x.fillStyle = '#ffd479'; fitText(x, '壁未認識: 左スティック押込みで設定', 18, 226, 476, 19, 12, false); }
   hudTex.needsUpdate = true;
@@ -1273,7 +1274,7 @@ function drawHud(alt, spd, noPlane, ctrl) {
 
 function updateHud(dt) {
   hud.acc += dt;
-  if (hud.acc < 1 / C.HUD_HZ && vrHold.step === hud.hold) return;     // 長押しの進捗だけは即時に描き直す
+  if (hud.acc < 1 / C.HUD_HZ && (vrHold.step || xit.step * 10) === hud.hold) return;     // 長押しの進捗だけは即時に描き直す
   hud.acc = 0;
   const alt = Math.round((pos.y - sim.groundY) * 100), spd = Math.round(vel.length() * 10);
   const noPlane = renderer.xr.isPresenting && planes.length === 0 && !world.vr, ctrl = input.hasController;
@@ -1281,8 +1282,8 @@ function updateHud(dt) {
   const dist = world.vr && !world.ex && world.cam === 1 ? Math.round(Math.hypot(drone.position.x - eyeW.x, drone.position.y - eyeW.y, drone.position.z - eyeW.z)) : 0;   // 自然・操縦者目線: 自分の目から機体までの距離 [m] (1m刻み)
   const exSig = world.ex ? exHudSig() : '', nsg = natHudSig();
   const nsig = net.on || net.notice ? netHudSig() : '';       // ソロでは常に '' (描画判定に影響しない)
-  if (!hud.hudInit || dist !== hud.dist || exSig !== hud.exSig || nsg !== hud.natSig || alt !== hud.alt || spd !== hud.spd || sim.mode !== hud.mode || sim.state !== hud.state || noPlane !== hud.noPlane || ctrl !== hud.ctrl || nsig !== hud.nsig || wl !== hud.wl || vrHold.step !== hud.hold) {
-    hud.dist = dist; hud.exSig = exSig; hud.natSig = nsg; hud.wl = wl; hud.hold = vrHold.step; hud.hudInit = true; hud.alt = alt; hud.spd = spd; hud.mode = sim.mode; hud.state = sim.state; hud.noPlane = noPlane; hud.ctrl = ctrl; hud.nsig = nsig;
+  if (!hud.hudInit || dist !== hud.dist || exSig !== hud.exSig || nsg !== hud.natSig || alt !== hud.alt || spd !== hud.spd || sim.mode !== hud.mode || sim.state !== hud.state || noPlane !== hud.noPlane || ctrl !== hud.ctrl || nsig !== hud.nsig || wl !== hud.wl || (vrHold.step || xit.step * 10) !== hud.hold) {
+    hud.dist = dist; hud.exSig = exSig; hud.natSig = nsg; hud.wl = wl; hud.hold = vrHold.step || xit.step * 10; hud.hudInit = true; hud.alt = alt; hud.spd = spd; hud.mode = sim.mode; hud.state = sim.state; hud.noPlane = noPlane; hud.ctrl = ctrl; hud.nsig = nsig;
     drawHud(alt, spd, noPlane, ctrl);
   }
 }
@@ -2289,6 +2290,8 @@ camera.add(fadeQuad, vigQuad);
 
 const fade = { phase: 0, t: 0, a: 0, kind: 0, arg: 0, black: 0, hold: 0 };    // phase: 0=なし 1=暗転中(出) 2=明転中(入)。kind: 1=ワールド切替 (arg=行き先 0=MR 1=自然 2=試験場) 2=視点切替 3=試験場の科目切替 (arg=科目。立ち位置が変わる時だけ)。black: 真っ暗で描いたフレーム数 / hold: 切替後に真っ暗のまま待つ残りフレーム数
 const vrHold = { t0: 0, fired: false, step: 0 };               // 右スティック長押し
+/** 終了メニュー (アプリ内で終了): 両手のグリップ長押し (XR) / Backspace (デスクトップ)。open の間は操縦入力・ボタンを全てここで受ける。 */
+const xit = { t0: 0, fired: false, step: 0, open: false, mesh: null, cap: null, ctx: null, tex: null, cctx: null, ctex: null, capStep: -1 };
 const worldId = (w) => (typeof w === 'number' ? w : w ? 1 : 0);   // 旧い呼び方 (true/false) も受け付ける: true=自然 false=MR
 /** ワールド切替を依頼。1回の暗転で行き先へ直接切り替わる (自然⇄試験場もMRを経由しない)。 */
 function vrRequestWorld(w) {
@@ -2540,6 +2543,82 @@ function vrHoldUpdate(pressed) {
   const f = (now - vrHold.t0) / (C.VR_HOLD_S * 1000);
   vrHold.step = Math.min(5, 1 + Math.floor(f * 5));
   if (f >= 1) { vrHold.fired = true; vrHold.step = 0; vrRequestWorld(WORLD_NEXT[world.id]); }   // MR → MR試験 → 自然 → 試験場 → MR
+}
+
+/* ---- 終了メニュー (アプリ内で終了) ----
+ * 開く: 両手のグリップ (左右の buttons[1]・コントローラーのみ) を C.EXIT_HOLD 秒握り続ける / デスクトップは Backspace。
+ * 開いている間: 操縦スティックは中立 (機体は今の状態のまま) / 右トリガー = 終了 / B = 続ける。他のボタンは全て無効 (呼び戻し・再生・離着陸・配置の確定も動かない)。
+ * 終了: XR は session.end() (従来の終了経路 = onXREnd → 遊んだプレイ方法の説明画面へ。試験の途中なら 中断 として 1 回だけ記録される)。デスクトップは同じ画面へ戻す。 */
+function xitInit() {
+  if (xit.mesh) return;
+  const mat = (tex) => new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false, toneMapped: false });
+  const cv = document.createElement('canvas'); cv.width = 768; cv.height = 384; xit.ctx = cv.getContext('2d');
+  xit.tex = new THREE.CanvasTexture(cv); xit.tex.colorSpace = THREE.SRGBColorSpace;
+  xit.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.3), mat(xit.tex));        // 幅 0.6 m を 1.2 m 先に (両目に同じ位置)
+  xit.mesh.position.set(0, 0, -1.2); xit.mesh.renderOrder = 999; xit.mesh.frustumCulled = false; xit.mesh.visible = false; xit.mesh.name = 'exitPanel';
+  const cv2 = document.createElement('canvas'); cv2.width = 1024; cv2.height = 176; xit.cctx = cv2.getContext('2d');
+  xit.ctex = new THREE.CanvasTexture(cv2); xit.ctex.colorSpace = THREE.SRGBColorSpace;
+  xit.cap = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.8 * 176 / 1024), mat(xit.ctex));
+  xit.cap.position.set(0, -0.19, -0.9); xit.cap.renderOrder = 996; xit.cap.frustumCulled = false; xit.cap.visible = false; xit.cap.name = 'exitCaption';   // 試験員の字幕 (y=-0.34) の少し上
+  camera.add(xit.mesh, xit.cap);
+}
+function xitDrawPanel() {
+  const x = xit.ctx, xr = renderer.xr.isPresenting;
+  x.clearRect(0, 0, 768, 384);
+  x.fillStyle = 'rgba(8,16,28,0.94)'; exRR(x, 4, 4, 760, 376, 34); x.fill();
+  x.strokeStyle = 'rgba(255,177,74,0.95)'; x.lineWidth = 6; x.stroke();
+  x.textBaseline = 'top'; x.textAlign = 'center';
+  x.fillStyle = '#ffee66'; fitText(x, '終了しますか？', 384, 38, 700, 66, 40, true);
+  x.fillStyle = '#ffffff'; fitText(x, xr ? '右トリガー：終了してメニューへ' : 'Enter：終了してメニューへ', 384, 168, 700, 44, 26, true);
+  x.fillStyle = '#b8d4ff'; fitText(x, xr ? 'B：続ける' : 'Esc：続ける', 384, 262, 700, 44, 26, true);
+  x.textAlign = 'left'; xit.tex.needsUpdate = true;
+}
+function xitDrawCap() {
+  const x = xit.cctx, s = xit.step; xit.capStep = s;
+  x.clearRect(0, 0, 1024, 176);
+  x.fillStyle = 'rgba(8,20,40,0.9)'; exRR(x, 4, 4, 1016, 168, 28); x.fill();
+  x.strokeStyle = 'rgba(255,177,74,0.95)'; x.lineWidth = 5; x.stroke();
+  x.textBaseline = 'top'; x.textAlign = 'center';
+  x.fillStyle = '#ffffff'; fitText(x, '両手のグリップを握り続けると終了メニュー', 512, 26, 960, 46, 28, true);
+  x.fillStyle = '#ffee66'; fitText(x, '■'.repeat(s) + '□'.repeat(5 - s), 512, 100, 960, 52, 30, true);
+  x.textAlign = 'left'; xit.ctex.needsUpdate = true;
+}
+function xitOpen() {
+  if (xit.open || !placed || spec.on) return false;
+  xitInit(); xit.open = true; xit.step = 0;
+  xit.mesh.scale.setScalar(renderer.xr.isPresenting ? 1 : 1.6);
+  xitDrawPanel(); xit.mesh.visible = true;
+  keys.clear(); mrx.enterPulse = false;
+  return true;
+}
+function xitClose() { xit.open = false; if (xit.mesh) xit.mesh.visible = false; }
+/** セッション開始/終了時 (resetWorld から): 開いていれば閉じ、長押しの状態も捨てる。 */
+function xitReset() { xit.open = false; xit.t0 = 0; xit.fired = false; xit.step = 0; if (xit.mesh) xit.mesh.visible = false; if (xit.cap) xit.cap.visible = false; }
+/** 「終了してメニューへ」。XR: session.end() (onXREnd が画面を戻す。失敗してもパネルは開いたまま) / デスクトップ: 同じ説明画面へ戻す。 */
+function xitEnd() {
+  if (renderer.xr.isPresenting) {
+    const ss = xrSession;
+    if (ss) { try { const pr = ss.end(); if (pr && pr.catch) pr.catch(() => {}); } catch (e) { /* ignore */ } }
+  } else {
+    xitClose(); keys.clear(); START_WORLD = 0; stopAudio(); resetWorld(); placeHud(); uiSessionEnded();
+  }
+}
+/** 両グリップの長押し (実時間 EXIT_HOLD)。離せばその場で取り消し。開いた後は両方を離すまで再発火しない。 */
+function xitHoldUpdate(both) {
+  if (!both) { xit.t0 = 0; xit.fired = false; xit.step = 0; return; }
+  const now = performance.now();
+  if (!xit.t0) xit.t0 = now;
+  if (xit.open || fade.phase !== 0 || !placed) xit.fired = true;     // 開いている間・暗転中の握りは無視 (離して握り直すまで発火しない)
+  if (xit.fired) { xit.step = 0; return; }
+  const f = (now - xit.t0) / (C.EXIT_HOLD * 1000);
+  xit.step = Math.min(5, 1 + Math.floor(f * 5));
+  if (f >= 1) { xit.fired = true; xit.step = 0; xitOpen(); }
+}
+/** 毎フレーム: 握っている間の字幕 (頭に固定) と確認パネルの表示。 */
+function xitFrame() {
+  if (xit.step > 0 && !xit.open) { xitInit(); if (xit.capStep !== xit.step) xitDrawCap(); xit.cap.visible = true; }
+  else if (xit.cap && xit.cap.visible) { xit.cap.visible = false; xit.capStep = -1; }
+  if (xit.mesh) xit.mesh.visible = xit.open;
 }
 
 /** メインループから (毎フレーム): フェード → リグ → 空の追従 → ビネット → 風。例外はここで止める。 */
@@ -4053,8 +4132,8 @@ function exDrawHud() {
   // 凡例 (最下段): 長押しの進捗 > 通常の凡例
   x.fillStyle = '#8fa3b8';
   fitText(x, 'B=モーター　Y=科目　A=お手本　左トリガー=表示/やり直し　X長押し=記録　右トリガー=再生', 18, 218, 476, 14, 10, false);
-  if (vrHold.step > 0) drawHoldBar(x, 235, 476);
-  else fitText(x, (world.mrx ? '左スティック押込み=スペース設定　右トリガー長押し=再配置　右スティック長押し=ワールド　' : '左スティック押込み=視点　右スティック長押し=ワールド　') + (stickMode === 1 ? 'モード1（昇降=右）' : 'モード2（昇降=左）'), 18, 235, 476, 14, 9, false);
+  if (vrHold.step > 0 || xit.step > 0) drawHoldBar(x, 235, 476);
+  else fitText(x, (world.mrx ? '左押込み=スペース設定　右トリガー長押し=再配置　右スティック長押し=ワールド　' : '左押込み=視点　右スティック長押し=ワールド　') + '両グリップ長押し＝終了　' + (stickMode === 1 ? 'モード1（昇降=右）' : 'モード2（昇降=左）'), 18, 235, 476, 14, 8, false);
   hudTex.needsUpdate = true;
 }
 
@@ -4754,7 +4833,8 @@ function mrxDrawHudPlacing(x) {
   if (F.msg2) fitText(x, F.msg2, 18, 164, W, 19, 10, true);
   if (F.sugTxt && F.lvl === 2) { x.fillStyle = '#ffd479'; fitText(x, F.sugTxt, 18, 188, W, 18, 10, true); }
   if (ex.noticeT > 0 && ex.notice) { x.fillStyle = '#ffb14a'; fitText(x, ex.notice, 18, 212, W, 17, 10, true); }
-  x.fillStyle = '#8fa3b8'; fitText(x, '左スティック押込み=スペース設定　X=HUD　右スティック長押し=ワールド', 18, 234, W, 14, 9, false);
+  if (xit.step > 0) drawHoldBar(x, 232, W);
+  else { x.fillStyle = '#8fa3b8'; fitText(x, '左押込み=スペース設定　X=HUD　右スティック長押し=ワールド　両グリップ長押し＝終了', 18, 234, W, 14, 9, false); }
 }
 /** 飛行中の高度の補足 (実寸 → 本番換算) と縮尺。 */
 const mrxAltText = (altReal) => (cf.s === 1 ? '原寸 1/1（実寸のまま）' : '本番換算　縮尺 ' + MRX_SNAME[mrx.si] + '（実寸 ' + altReal.toFixed(2) + ' m）');
@@ -6895,10 +6975,33 @@ function readXRInputs(session, xrFrame, ref) {
   let gotL = false, gotR = false;
   const srcs = session.inputSources;
   input.lx = input.ly = input.rx = input.ry = 0; input.recall = false;
+  let gl = false, gr = false;                                // 両手のグリップ (buttons[1]): 終了メニュー。コントローラーのみ (手は対象外)
+  for (let i = 0; i < srcs.length; i++) {
+    const s = srcs[i], gp = s.gamepad;
+    if (!gp || s.hand) continue;
+    const g = gp.buttons[1], gpr = !!(g && g.pressed);
+    if (s.handedness === 'left') gl = gpr; else if (s.handedness === 'right') gr = gpr;
+  }
+  const gripBoth = gl && gr, xo = xit.open;                  // gripBoth: 両方握っている間は MR試験の配置の微調整・旋回を無視 (コースが回らない) / xo: 終了メニュー中
   for (let i = 0; i < srcs.length; i++) {
     const s = srcs[i], gp = s.gamepad;
     if (!gp || s.hand) continue;                             // ハンドトラッキング (Questは手にもgamepadが付く) は対象外
     const ax = gp.axes, b = gp.buttons;
+    if (xo) {                                                // 終了メニュー中: スティックは中立のまま・ボタンは押下の状態だけ追う (閉じた時にその押下が働かないように)
+      if (s.handedness === 'left') {
+        gotL = true; mrxFlick(0); rec.x.down = false; exY.ok = false; exY.t0 = 0; exY.fired = false; exL.ok = false; exL.t0 = 0; exL.fired = false; rec.l.down = false; rec.l.prev = !!(b[0] && b[0].pressed); rec.y.prev = !!(b[5] && b[5].pressed);
+        prevBtn.X = !!(b[4] && b[4].pressed); prevBtn.L = rec.l.prev; prevBtn.LS = !!(b[3] && b[3].pressed); prevBtn.Y = rec.y.prev;
+      } else if (s.handedness === 'right') {
+        gotR = true; mrx.rsx = mrx.rsy = 0; mrx.grip = false; vrHoldUpdate(false);
+        const rt = !!(b[0] && b[0].pressed);
+        if (edge('B', !!(b[5] && b[5].pressed))) xitClose();
+        edge('A', !!(b[4] && b[4].pressed));
+        const ended = edge('XRT', rt);                       // (開く時に押したままの右トリガーは、いったん離すまで終了にならない)
+        prevBtn.RT = rt; rec.rt.prev = rt; rec.rt.down = false; mrx.rt.ok = false; mrx.rt.t0 = 0; mrx.rt.fired = false;
+        if (ended && xit.open) xitEnd();
+      }
+      continue;
+    }
     const sx = ax.length >= 4 ? ax[2] : (ax[0] || 0), sy = ax.length >= 4 ? ax[3] : (ax[1] || 0);
     if (s.handedness === 'left') {
       gotL = true; input.lx = world.ex ? shapeYaw(sx) : shape(sx); if (stickMode === 1) input.ry = shape(-sy); else input.ly = shape(-sy);   // 上=上昇(モード2)/前進(モード1), 右=右旋回
@@ -6920,10 +7023,10 @@ function readXRInputs(session, xrFrame, ref) {
       else prevBtn.Y = yp;                                        // MR (ソロ): 何もしない。状態だけ追う (押したまま自然へ入った時に、その押下で風の強さが変わらないように)
     } else if (s.handedness === 'right') {
       gotR = true; input.rx = shape(sx); if (stickMode === 1) input.ly = shape(-sy); else input.ry = shape(-sy);   // 前=前進(モード2)/上昇(モード1), 右=右移動
-      if (world.mrx) { mrx.rsx = shape(sx); mrx.rsy = shape(-sy); mrx.grip = !!(b[1] && b[1].pressed); }   // MR試験の配置: 右スティック = 位置の微調整 / 右グリップを押しながら左右 = 向き
+      if (world.mrx) { mrx.rsx = gripBoth ? 0 : shape(sx); mrx.rsy = gripBoth ? 0 : shape(-sy); mrx.grip = !gripBoth && !!(b[1] && b[1].pressed); }   // MR試験の配置: 右スティック = 位置の微調整 / 右グリップを押しながら左右 = 向き (両手のグリップ = 終了メニューの長押し中は動かさない)
       if (edge('A', !!(b[4] && b[4].pressed))) { if (!recA()) toggleMode(); }
       if (edge('B', !!(b[5] && b[5].pressed))) { if (!recB()) toggleFlight(); }
-      input.recall = !!(b[0] && b[0].pressed);
+      input.recall = !!(b[0] && b[0].pressed); prevBtn.XRT = input.recall;
       recRStick(sx, -sy);                                         // 再生 / 記録ボード: 右スティック
       if (!recRT(input.recall)) mrxRT(input.recall);                                        // MR試験: 配置 / 1秒長押しで配置し直し
       void prevBtn.RTx;                                           // 試験場の右トリガーは何もしない (呼び戻しも無い)
@@ -6932,8 +7035,9 @@ function readXRInputs(session, xrFrame, ref) {
     }
   }
   if (!gotL) { rec.x.down = false; rec.l.prev = false; rec.y.prev = false; recLTrig(false); recYBtn(false); prevBtn.X = false; prevBtn.L = false; prevBtn.Y = false; prevBtn.LS = false; exYBtn(false); exLTrig(false); }
-  if (!gotR) { rec.rs.x = 0; rec.rt.prev = false; recRT(false); prevBtn.A = false; prevBtn.B = false; prevBtn.RT = false; prevBtn.RTx = false; vrHoldUpdate(false); mrxRT(false); mrx.rsx = mrx.rsy = 0; mrx.grip = false; }
+  if (!gotR) { prevBtn.XRT = false; if (xit.open) xitClose(); rec.rs.x = 0; rec.rt.prev = false; recRT(false); prevBtn.A = false; prevBtn.B = false; prevBtn.RT = false; prevBtn.RTx = false; vrHoldUpdate(false); mrxRT(false); mrx.rsx = mrx.rsy = 0; mrx.grip = false; }
   input.hasController = gotL || gotR;
+  xitHoldUpdate(gripBoth && gotL && gotR);                   // 両手のグリップ長押し → 終了メニュー (ハンドトラッキングだけの時は何もしない)
 }
 
 const keys = new Set();
@@ -6942,6 +7046,11 @@ window.addEventListener('keydown', (e) => {
   if (!startEl.classList.contains('hidden')) return;         // 開始画面が出ている間のキー (Tab / Enter / Space / Esc) は画面の操作。裏のプレビューを動かさない
   if (e.target && e.target.tagName === 'INPUT') return;      // ルーム名入力中のキーは操縦に使わない
   if (spec.on) { if (!e.repeat) specKey(e); return; }        // PC観戦モードのキー
+  if (xit.open) {                                            // 終了メニュー: Enter = 終了してメニューへ / Esc = 続ける。他のキーは全て無効
+    if (!e.repeat) { if (e.code === 'Enter') xitEnd(); else if (e.code === 'Escape') xitClose(); }
+    e.preventDefault(); return;
+  }
+  if (e.code === 'Backspace') { e.preventDefault(); if (!e.repeat) xitOpen(); return; }   // 終了メニューを開く (他のどのワールドでも使っていないキー。Q は試験場の再生で使用)
   if (e.code.startsWith('Arrow')) e.preventDefault();
   if (e.repeat) { if (rb.open && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) recKey(e); return; }   // 記録ボード: 上下キーの押しっぱなしで選択を送る
   keys.add(e.code);
@@ -6964,6 +7073,7 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 function readKeyboard() {
+  if (xit.open) { input.lx = input.ly = input.rx = input.ry = 0; input.recall = false; input.hasController = true; mrxRT(false); mrx.enterPulse = false; return; }   // 終了メニュー中: 操縦は中立
   const k = (c) => (keys.has(c) ? 1 : 0);
   input.lx = k('ArrowRight') - k('ArrowLeft'); input.ly = k('ArrowUp') - k('ArrowDown');
   input.rx = k('KeyD') - k('KeyA'); input.ry = k('KeyW') - k('KeyS');
@@ -7116,6 +7226,7 @@ function frameBody(time, xrFrame) {
   desk.visible = !xr && (!world.vr || world.mrx);
   hudMesh.visible = sim.hudOn && !rp.on;                       // 再生中は手元のHUDを隠す (再生パネルと重なるため)
   updateHud(dt); updateHudFloat();
+  xitFrame();                                                // 終了メニュー: 握っている間の字幕・確認パネル (頭に固定)
   updateMonitor(dt);                                         // ドローン視点を (30Hz上限で) RTへ描く: メイン描画の前
   if (world.vr && !world.mrx) updateAudio(avg, now, eyeW, eyeQ); else if (xr) updateAudio(avg, now, head.pos, head.quat); else updateAudio(avg, now, camera.position, camera.quaternion);
   renderer.render(scene, camera);
@@ -7131,7 +7242,8 @@ function resetWorld() {
   sim.pitch = sim.roll = sim.yawRate = 0; sim.holdXZ = sim.holdY = false;
   planes.length = 0; planeMap.clear(); planeFeature = false; roomTimer = 0; head.valid = false; hud.hudInit = false;
   auto.phase = 1; auto.until = 0; auto.speed = 0;
-  prevBtn.A = prevBtn.B = prevBtn.X = prevBtn.L = prevBtn.LS = false; roomCaptureAsked = false;
+  prevBtn.A = prevBtn.B = prevBtn.X = prevBtn.L = prevBtn.LS = prevBtn.XRT = false; roomCaptureAsked = false;
+  xitReset();
   planesRev++;
   resetMonitor();
   autoTakeoffDone = false; noCtrlT = 0;
@@ -8491,7 +8603,7 @@ if (DEBUG) {
   const dv = new THREE.Vector3(), dq = new THREE.Quaternion();
   const yawOf = (q) => { dv.set(0, 0, -1).applyQuaternion(q); return Math.atan2(-dv.x, -dv.z); };
   window.__drone = {
-    THREE, C, P, P_MR, P_VR, world, rig, vrw, fade, rigS, vrHold, eyeW, eyeQ, fadeQuad, vigQuad, vigMat, fadeMat, hemi, sun, depthHook, wind, mrSave, mrLight, mrCam, pos, vel, quat, sim, shadowBias, shadowMat, input, head, room, planes, auto, hud, hudMesh, audio, drone, mon, monMesh, monRT, monScene, fpvCam, roomModel, roomFill, roomLines, userMark, MON_LAYER, planeKind, shadow, camera, renderer, scene, orbit, tgt, vCmd, startCenter,
+    THREE, C, P, P_MR, P_VR, world, rig, vrw, fade, rigS, vrHold, xit, xitOpen, xitClose, xitEnd, prevBtn, eyeW, eyeQ, fadeQuad, vigQuad, vigMat, fadeMat, hemi, sun, depthHook, wind, mrSave, mrLight, mrCam, pos, vel, quat, sim, shadowBias, shadowMat, input, head, room, planes, auto, hud, hudMesh, audio, drone, mon, monMesh, monRT, monScene, fpvCam, roomModel, roomFill, roomLines, userMark, MON_LAYER, planeKind, shadow, camera, renderer, scene, orbit, tgt, vCmd, startCenter,
     terrainHeight, terrainAt, vrGround, vrGroundMax, vrHomeFor, vrRawHeight, vrDepth, vrDepthRange, frameErr, vrFail, vrFadeStep, netInitShared, sharedDiag, drawHud, hudCv, applyWorld, vrRequestWorld, vrRequestCam, vrUpdateRig, vrTreeCollide, collideVR, vrSurfaceTop, vrBuildWorld, vrSceneLook, vrPickWaypoint, vrHoldUpdate, windStart, windStop, specSetWorld, specToggleWorld, vrFrame, applyDepthMeshMode, vrPlaceAtHome,
     stepSim, collide, updatePlanes, recomputeRoom, readXRInputs, placeHud, updateHeadXR, pickWaypoint, behindWall, surfaceHeightAt, surfaceClearance,
     toggleFlight, toggleMode, toggleHud, toggleMonitor, setMonitor, renderMonitor, updateFpvCamera, syncRoomModel, rebuildRoomModel, roomModelStale, resetWorld, placeDroneInitial, initAudio, stopAudio, frame,
@@ -8549,17 +8661,18 @@ const uiStickRows = (sm) => (sm === 1
   ? [['左スティック', '前後・旋回'], ['右スティック', '上昇下降・左右']]
   : [['左スティック', '上昇下降・旋回'], ['右スティック', '前後・左右']]);
 const UI_SWITCH = ['右スティック長押し（0.5秒）', 'ワールド切替（MR → MR試験 → 自然 → 試験場 → MR）'];
+const UI_EXIT = ['両手のグリップ長押し（1秒）', '終了メニュー（右トリガー = 終了してメニューへ / B = 続ける）'];
 const UI_HAND = 'コントローラーなし（ハンドトラッキング）の場合は自動モードで飛行します。ピンチで離着陸。';
 const UI_WARN_VR = 'VRでは周囲が見えません。その場から動かずに操作してください';
 const UI_NET_NEED = ['同じ Wi-Fi（同じネットワーク）につないだ端末どうしで飛ばします。', '全員が同じルーム名を入力してください（大文字小文字・空白も同じに）。'];
-const UI_KB_EXAM = [['T', '始動 → ↑ で離陸'], ['Y', '科目の切替'], ['M', 'お手本'], ['G', '本番 / 補助表示'], ['U', 'やり直し'], ['K', '位置安定 ON/OFF（フリー練習）'], ['B', '記録ボード'], ['P', '直前の飛行を再生（Space=再生/停止 ←→=送り ↑↓=速さ E/Q=次/前の出来事 O=お手本 Esc=終了）']];
-const UI_KB_MR = [['WASD', '前後左右'], ['矢印キー', '上下・旋回'], ['T', '離着陸'], ['M', '自動 ⇄ 手動'], ['R', '呼び戻し'], ['H', 'HUD表示'], ['V', 'ドローン視点'], ['N', 'ワールド切替'], ['ドラッグ', '視点']];
+const UI_KB_EXAM = [['T', '始動 → ↑ で離陸'], ['Y', '科目の切替'], ['M', 'お手本'], ['G', '本番 / 補助表示'], ['U', 'やり直し'], ['K', '位置安定 ON/OFF（フリー練習）'], ['B', '記録ボード'], ['P', '直前の飛行を再生（Space=再生/停止 ←→=送り ↑↓=速さ E/Q=次/前の出来事 O=お手本 Esc=終了）'], ['Backspace', '終了メニュー（Enter = 終了してメニューへ / Esc = 続ける）']];
+const UI_KB_MR = [['WASD', '前後左右'], ['矢印キー', '上下・旋回'], ['T', '離着陸'], ['M', '自動 ⇄ 手動'], ['R', '呼び戻し'], ['H', 'HUD表示'], ['V', 'ドローン視点'], ['N', 'ワールド切替'], ['Backspace', '終了メニュー（Enter = 終了してメニューへ / Esc = 続ける）'], ['ドラッグ', '視点']];
 const UI_KB_VIEW = [['ドラッグ', '回転'], ['ホイール', 'ズーム'], ['右ドラッグ / Shift+ドラッグ', '移動'], ['F', '全体表示'], ['T', '真上'], ['N', 'MR部屋 → VR自然 → 試験場の表示切替'], ['1〜9, 0 / 名簿の行', '追尾'], ['Esc', '追尾解除']];
-const UI_MR_ROWS = [['A', '自動 ⇄ 手動の切替'], ['B', '離陸 / 着陸'], ['右トリガー長押し', '手元へ呼び戻し'], ['X', 'HUD表示の切替'], ['左トリガー', 'ドローン視点のモニター'], UI_SWITCH];
-const UI_NAT_ROWS = [['B', '離陸 / 着陸'], ['A', '自動 ⇄ 手動の切替（位置安定OFF中は手動のみ）'], ['左トリガー', '位置安定 ON/OFF（既定ON。OFFだと止まらず風に流されます）'], ['左Y', '風の強さ（無風 → 弱 → 中）'], ['左スティック押込み', '視点切替（操縦者目線 ⇄ 一人称）'], ['右トリガー長押し', '手元へ呼び戻し'], ['X', 'HUD表示の切替'], UI_SWITCH];
-const UI_EXAM_ROWS = [['B', 'モーター始動 / 停止（スロットルで離陸・降下し、接地すれば着陸）'], ['左Y', '科目の切替'], ['A', 'お手本飛行'], ['左トリガー', '本番 / 補助表示（長押しでやり直し）'], ['右トリガー（短押し）', '直前の飛行を再生（着陸してモーターを止めている時）'], ['左X 1秒長押し', '記録ボード（着陸してモーターを止めている時）'], UI_SWITCH];
-const UI_MRX_ROWS = [['右トリガー', '配置: 今の立ち位置と向きでコースを置く'], ['左Y', '配置中は縮尺 / 配置後は科目'], ['左スティック左右', '配置中: 科目の切替'], ['右スティック', '配置中: 位置の微調整（右グリップを押しながら左右 = 向き）'], ['右トリガー1秒長押し', '配置し直し（モーター停止中）'], ['B', 'モーター始動 / 停止'], ['A', 'お手本飛行'], ['左トリガー', '本番 / 補助表示（長押しでやり直し）'], UI_SWITCH];
-const UI_MULTI_ROWS = UI_MR_ROWS.slice(0, 5).concat([['左Y', '位置合わせの開始 / 中止（1.5秒長押しで解除）'], ['右トリガー', '位置合わせ中: 点を記録'], UI_SWITCH]);
+const UI_MR_ROWS = [['A', '自動 ⇄ 手動の切替'], ['B', '離陸 / 着陸'], ['右トリガー長押し', '手元へ呼び戻し'], ['X', 'HUD表示の切替'], ['左トリガー', 'ドローン視点のモニター'], UI_SWITCH, UI_EXIT];
+const UI_NAT_ROWS = [['B', '離陸 / 着陸'], ['A', '自動 ⇄ 手動の切替（位置安定OFF中は手動のみ）'], ['左トリガー', '位置安定 ON/OFF（既定ON。OFFだと止まらず風に流されます）'], ['左Y', '風の強さ（無風 → 弱 → 中）'], ['左スティック押込み', '視点切替（操縦者目線 ⇄ 一人称）'], ['右トリガー長押し', '手元へ呼び戻し'], ['X', 'HUD表示の切替'], UI_SWITCH, UI_EXIT];
+const UI_EXAM_ROWS = [['B', 'モーター始動 / 停止（スロットルで離陸・降下し、接地すれば着陸）'], ['左Y', '科目の切替'], ['A', 'お手本飛行'], ['左トリガー', '本番 / 補助表示（長押しでやり直し）'], ['右トリガー（短押し）', '直前の飛行を再生（着陸してモーターを止めている時）'], ['左X 1秒長押し', '記録ボード（着陸してモーターを止めている時）'], UI_SWITCH, UI_EXIT];
+const UI_MRX_ROWS = [['右トリガー', '配置: 今の立ち位置と向きでコースを置く'], ['左Y', '配置中は縮尺 / 配置後は科目'], ['左スティック左右', '配置中: 科目の切替'], ['右スティック', '配置中: 位置の微調整（右グリップを押しながら左右 = 向き）'], ['右トリガー1秒長押し', '配置し直し（モーター停止中）'], ['B', 'モーター始動 / 停止'], ['A', 'お手本飛行'], ['左トリガー', '本番 / 補助表示（長押しでやり直し）'], UI_SWITCH, UI_EXIT];
+const UI_MULTI_ROWS = UI_MR_ROWS.slice(0, 5).concat([['左Y', '位置合わせの開始 / 中止（1.5秒長押しで解除）'], ['右トリガー', '位置合わせ中: 点を記録'], UI_SWITCH, UI_EXIT]);
 
 /** プレイ方法の定義。world = 開始するワールド / room = ルーム名を使う (みんなで・観戦) / fields = 説明画面に出す設定 (XR端末) / pcFields = PC。
  *  ctl(sm) = 主な操作 (sm = スティックのモード 1|2)。more = 操作一覧だけに出す追加の行。 */
@@ -8639,13 +8752,15 @@ const UI_MODES = {
 
   let lastMode = '';
   try { const lm = localStorage.getItem(MODE_KEY); if (START_MODES.includes(lm) && !(lm === 'watch' && supported)) lastMode = lm; } catch (e) { lastMode = ''; }
-  const rememberMode = (id) => { lastMode = id; try { localStorage.setItem(MODE_KEY, id); } catch (e) { /* ignore */ } };
   const lastCard = () => { const c = cardOf(lastMode); return c && !c.hidden ? c : null; };
-  for (const c of cards) { const b = c.querySelector('.last'); if (b) b.hidden = c !== lastCard(); }
+  const refreshLastBadges = () => { const lc = lastCard(); for (const c of cards) { const b = c.querySelector('.last'); if (b) b.hidden = c !== lc; } };   // 「前回」バッジ: 遊んだ直後 (メニューへ戻る前) とメニューを出すたびに付け直す
+  const rememberMode = (id) => { lastMode = id; try { localStorage.setItem(MODE_KEY, id); } catch (e) { /* ストレージ不可でも、このページの間は覚えている */ } refreshLastBadges(); };
+  refreshLastBadges();
 
   const showScreen = (name) => {
     screen = name;
     for (const k of Object.keys(scr)) scr[k].hidden = k !== name;
+    if (name === 'menu') refreshLastBadges();
     startEl.scrollTop = 0;
   };
   const focusMenu = () => { const c = lastCard() || cards.find((x) => !x.hidden); if (c) c.focus({ preventScroll: true }); };
@@ -8683,7 +8798,7 @@ const UI_MODES = {
     showScreen('detail');
   }
   const focusDetail = () => { if (!btn.disabled) btn.focus({ preventScroll: true }); else dTitle.focus({ preventScroll: true }); };
-  const backToMenu = () => { if (starting) return; msgEl.textContent = ''; showScreen('menu'); const c = cardOf(cur); if (c && !c.hidden) c.focus({ preventScroll: true }); else focusMenu(); };
+  const backToMenu = () => { if (starting) return; msgEl.textContent = ''; showScreen('menu'); const c = lastCard() || cardOf(cur); if (c && !c.hidden) c.focus({ preventScroll: true }); else focusMenu(); };   // 前回遊んだカードにフォーカス (遊んでいなければ、開いていたカード → 先頭)
   for (const c of cards) c.addEventListener('click', () => { msgEl.textContent = ''; openMode(c.dataset.mode); focusDetail(); });
   backBtn.addEventListener('click', backToMenu);
   roomEl.addEventListener('input', () => { if (cur) syncStart(); });
@@ -8698,7 +8813,7 @@ const UI_MODES = {
       body.appendChild(s);
     };
     body.appendChild(uiEl('p', '', '現在のスティックの割り当て: モード' + stickMode + '（説明画面の「スティックの割り当て」で変えられます）。'));
-    sec('共通（全ワールド）', uiStickRows(stickMode).concat([['右スティック長押し（0.5秒）', 'ワールド切替（MR → MR試験 → 自然 → 試験場 → MR）'], ['左スティック押込み', 'VR: 視点切替（操縦者目線 ⇄ 一人称） / MR: 平面が無い時はスペース設定']]), [UI_HAND]);
+    sec('共通（全ワールド）', uiStickRows(stickMode).concat([['右スティック長押し（0.5秒）', 'ワールド切替（MR → MR試験 → 自然 → 試験場 → MR）'], ['左スティック押込み', 'VR: 視点切替（操縦者目線 ⇄ 一人称） / MR: 平面が無い時はスペース設定'], UI_EXIT]), [UI_HAND]);
     sec(nameOf('mr'), UI_MR_ROWS.slice(0, 5).concat(UI_MODES.mr.more), ['ドローン視点のモニターは左トリガーで出し入れします。']);
     sec(nameOf('nature'), UI_NAT_ROWS.slice(0, 7), ['位置安定をOFFにすると、止まらず風に流されます。自動飛行と帰還は使えません。']);
     sec(nameOf('exam'), UI_EXAM_ROWS.slice(0, 6).concat(UI_MODES.exam.more), ['試験員の指示（音声と字幕）に従って飛ばします。判定のある試験は 1 回ごとに記録され、終了後に自動のアドバイスが出ます（公式の採点・指導ではありません）。名前は説明画面の「受験者名」で記録を分けます。']);
