@@ -64,6 +64,11 @@
   #stickWrap label { display:block; font-size:13px; color:var(--muted); margin:0 0 6px; }
   #stickmode, #windsel { width:100%; box-sizing:border-box; padding:11px 12px; border-radius:12px; border:1px solid #ffffff33; background:#0b0f14aa; color:var(--fg); font-size:16px; font-family:inherit; }
   #stickmode:focus, #windsel:focus { outline:2px solid var(--accent); outline-offset:1px; }
+  #comfortWrap { margin:0 0 14px; }
+  #comfortWrap label.chk { display:flex; align-items:center; gap:12px; font-size:16px; line-height:1.4; color:var(--fg); cursor:pointer; padding:6px 0; }
+  #comfortWrap input[type=checkbox] { flex:0 0 24px; width:24px; height:24px; margin:0; accent-color:var(--accent); cursor:pointer; }
+  #comfortHint { margin:2px 0 0 36px; font-size:13px; line-height:1.5; color:var(--muted); }
+  #dCredit { margin:14px 0 0; font-size:12.5px; line-height:1.5; color:var(--muted); }
   #roomHint { margin:6px 0 0; font-size:13px; line-height:1.5; color:var(--muted); }
   #roomHint.need { color:#ffd479; }
   /* ---- 開始画面: プレイ方法の選択 (menu) → 説明と設定 (detail) → 操作一覧 (keys) ---- */
@@ -190,6 +195,8 @@
                 <p id="roomHint"></p></div>
               <div id="stickWrap"><label for="stickmode">スティックの割り当て（全ワールド共通）</label><select id="stickmode"><option value="2">モード2：左＝上昇下降・旋回 / 右＝前後・左右</option><option value="1">モード1：左＝前後・旋回 / 右＝上昇下降・左右</option></select></div>
               <div id="windWrap"><label for="windsel">風（VR）</label><select id="windsel"><option value="0">無風</option><option value="1">弱（自然 平均 1.0 m/s・試験場 0.3 m/s・既定）</option><option value="2">中（自然 平均 2.5 m/s・試験場 0.8 m/s）</option></select></div>
+              <div id="comfortWrap"><label class="chk" for="comfortsel"><input id="comfortsel" type="checkbox" checked aria-describedby="comfortHint"><span>一人称の快適モード（酔い軽減）</span></label>
+                <p id="comfortHint">一人称（機体目線）の時だけ働きます。操縦を最大速度の約5割・旋回の約5割に抑えてなめらかにし、視界の周りを暗くします。操縦者目線は変わりません。</p></div>
             </div>
           </div>
         </div>
@@ -197,6 +204,7 @@
           <h3 id="dCtlH">主な操作</h3>
           <table id="dCtl" aria-labelledby="dCtlH"><thead><tr><th scope="col" id="dCtlTh1">ボタン</th><th scope="col">機能</th></tr></thead><tbody></tbody></table>
           <p id="dCtlNote" class="note"></p>
+          <p id="dCredit" hidden></p>
         </div>
       </div>
     </div>
@@ -211,7 +219,7 @@
 <script type="module">
 import * as THREE from 'three';
 
-const APP_VERSION = 'v1.2';                                    // 開始画面に表示するビルド識別子
+const APP_VERSION = 'v1.3';                                    // 開始画面に表示するビルド識別子
 const DEBUG = new URLSearchParams(location.search).has('debug');
 const NAT_SWAY_Q = new URLSearchParams(location.search).get('sway') === '1';   // ?sway=1: 自然の樹木の揺れ (頂点シェーダーの差し替え) を有効にする。既定は無効 (C.NAT_TREE_SWAY)
 /* 開始画面のURL指定。?mode=mr|nature|exam|mrexam|multi|watch / ?world=vr|exam|mrexam (従来どおり。mr 以外の値はMR) / ?room= (みんなで。PCでは観戦)。
@@ -280,7 +288,8 @@ const C = Object.freeze({
   VR_AUTO_V: 6, VR_AUTO_VY: 3.5, VR_RECALL_V: 12,   // AUTO周遊の最高速度 / 上下速度 / 呼び戻しの最高速度 [m/s]
   VR_FPV_YAW_T: 0.06,                      // FPVの向きの追従の時定数 [s] (最大旋回 2 rad/s での遅れ = 率×時定数 ≒ 7°)
   VR_PILOT_BACK: 3, VR_SCALE_NEAR: 10, VR_SCALE_FAR: 100, VR_SCALE_MAX: 4,   // 操縦者目線: 自然ワールドの操縦位置 = 自機パッドの外側へ [m] / 遠い機体の拡大 (他機と同じ): 1倍はこの距離以内 [m] → VR_SCALE_FAR 以上で VR_SCALE_MAX 倍
-  VR_VIGNETTE: true, VR_VIGNETTE_MAX: 0.55, VR_VIG_SPEED: 8, VR_VIG_YAW: 1.5,   // 酔い対策のビネット: 有効 / 最大の濃さ / 最大になる視点速度 [m/s] / 旋回速度 [rad/s]
+  VR_VIGNETTE: true, VR_VIGNETTE_MAX: 0.55, VR_VIG_SPEED: 8, VR_VIG_YAW: 1.5,
+  COMFORT_V: 0.55, COMFORT_VY: 0.70, COMFORT_YAW: 0.50, COMFORT_TAU: 0.25, COMFORT_VIG_MIN: 0.36, COMFORT_VIG_MAX: 0.88, COMFORT_APERTURE: 1.08, COMFORT_APERTURE_MIN: 0.58,   // 一人称の快適モード (自然のFPVだけ。入力の整形): 水平速度 / 上下 / 旋回の倍率 / スティックの一次遅れの時定数 [s] / 常時の最小ビネット濃さ / 最大の濃さ / 穴の大きさ (既定 → 最小)   // 酔い対策のビネット: 有効 / 最大の濃さ / 最大になる視点速度 [m/s] / 旋回速度 [rad/s]
   VR_FADE_S: 0.25, VR_HOLD_S: 0.5,         // 切替時の暗転(出/入それぞれ) [s] / 右スティック長押しの時間 [s]
   EXIT_HOLD: 1.0,                          // 両手のグリップを同時に握り続けて終了メニューを開く時間 [s]
   VR_NEAR: 0.05, VR_FAR: 2500,             // VR中のカメラ範囲 [m] (霧で見えなくなる距離より十分遠く / HUD・暗幕より手前)
@@ -987,7 +996,9 @@ function updateMotors(dt, thrustLike, pErr, rErr, yErr) {
 
 /** 1ステップ。試験場だけ 前処理 (風・判定の時計) と後処理 (接地・判定) を挟む。自然は前処理 (風・位置安定の整合) だけ。MR は stepSimBody そのもの。 */
 function stepSim(dt) {
-  if (world.ex) { exPre(dt); stepSimBody(dt); exPost(dt); } else if (world.vr) { natPre(dt); stepSimBody(dt); } else stepSimBody(dt);
+  if (world.ex) { exPre(dt); stepSimBody(dt); exPost(dt); }
+  else if (world.vr) { natPre(dt); if (comfortActive()) { comfortShape(dt); stepSimBody(dt); comfortRestore(); } else { comfort.live = false; stepSimBody(dt); } }   // 自然の一人称 + 快適モード: スティックの値だけを整形して (倍率 + 一次遅れ) 同じ物理へ渡す。物理の表・積分器は共通のまま
+  else stepSimBody(dt);
 }
 function stepSimBody(dt) {
   sim.t += dt;
@@ -1118,7 +1129,7 @@ function drawHoldBar(x, y, W) {
   x.fillStyle = '#ffee66'; fitText(x, (xs ? '終了メニューを開きます　' : ['MR試験へ移動します　', '試験場へ移動します　', 'MRへ戻ります　', '自然の世界へ移動します　'][world.id]) + '■'.repeat(s) + '□'.repeat(5 - s), 18, y, W, 19, 12, true);
 }
 
-/** 自然のHUD: 位置安定 ON/OFF (OFF は警告色) と 風の強さ・機体の高さでの風速・機首に対する風向きの矢印 (上 = 機首。矢印の向き = 機体が押される向き) を1行で描く。h = 32。 */
+/** 自然のHUD: 位置安定 ON/OFF (OFF は警告色) と 風の強さ・機体の高さでの風速・風向きの矢印 (上 = 一人称は機首 / 操縦者目線は自分の正面。矢印の向き = 流される向き)・一人称の快適モードの札を1行で描く。h = 32。 */
 function drawHudNatStrip(x, y) {
   const on = nat.hold, label = on ? '位置安定 ON' : '位置安定 OFF', lv = ex.wind;
   x.font = 'bold 22px sans-serif';
@@ -1127,7 +1138,7 @@ function drawHudNatStrip(x, y) {
   x.beginPath(); if (x.roundRect) x.roundRect(18, y, cw, 32, 9); else x.rect(18, y, cw, 32); x.fill();
   if (on) { x.strokeStyle = 'rgba(56,211,159,0.9)'; x.lineWidth = 2; x.stroke(); }
   x.fillStyle = on ? '#8dffd8' : '#ffffff'; x.textBaseline = 'middle'; x.fillText(label, 30, y + 17);
-  // 風: 矢印 (円の上 = 機首) + 「風 弱 1.2 m/s」
+  // 風: 矢印 (円の上 = 一人称は機首 / 操縦者目線は自分の正面) + 「風 弱 1.2 m/s」
   const cx = 18 + cw + 30, cy = y + 16;
   x.strokeStyle = 'rgba(184,198,214,0.8)'; x.lineWidth = 2; x.beginPath(); x.arc(cx, cy, 15, 0, Math.PI * 2); x.stroke();
   x.fillStyle = '#b8c6d6'; x.beginPath(); x.moveTo(cx, cy - 20); x.lineTo(cx - 4, cy - 14); x.lineTo(cx + 4, cy - 14); x.closePath(); x.fill();   // 機首の印
@@ -1136,10 +1147,16 @@ function drawHudNatStrip(x, y) {
     x.strokeStyle = '#ffd479'; x.fillStyle = '#ffd479'; x.lineWidth = 3.5; x.beginPath(); x.moveTo(tx, ty); x.lineTo(cx + sa * 4, cy - ca * 4); x.stroke();
     x.beginPath(); x.moveTo(hx, hy); x.lineTo(cx + sa * 3 + ca * 6.5, cy - ca * 3 + sa * 6.5); x.lineTo(cx + sa * 3 - ca * 6.5, cy - ca * 3 - sa * 6.5); x.closePath(); x.fill();
   }
+  const cmf = comfortActive(), tagW = cmf ? 66 : 0;
+  if (cmf) {                                                                // 一人称の快適モード中: 右端に「快適」の札 (入力を抑えてなめらかにしている印)
+    x.fillStyle = 'rgba(56,211,159,0.28)'; x.beginPath(); if (x.roundRect) x.roundRect(494 - 60, y + 5, 60, 22, 8); else x.rect(494 - 60, y + 5, 60, 22); x.fill();
+    x.strokeStyle = 'rgba(56,211,159,0.9)'; x.lineWidth = 2; x.stroke();
+    x.fillStyle = '#8dffd8'; x.font = 'bold 17px sans-serif'; x.textBaseline = 'middle'; x.fillText('快適', 494 - 60 + 11, y + 17);
+  }
   x.fillStyle = lv > 0 ? '#ffffff' : '#b8c6d6'; x.font = 'bold 20px sans-serif'; x.textBaseline = 'middle';
   const wt = '風 ' + EX_WIND_NAME[lv] + (lv > 0 ? '  ' + nat.wspd.toFixed(1) + ' m/s' : ''), wx = cx + 24;
-  fitText(x, wt, wx, y + (lv > 0 ? 9 : 17), 494 - wx, lv > 0 ? 17 : 20, 12, true);
-  if (lv > 0) { x.fillStyle = '#d5deea'; fitText(x, '矢印＝流される向き（上＝機首）', wx, y + 25, 494 - wx, 14, 10, false); }   // 矢印の意味 (風上ではなく風下 = 風が吹いていく向きを、機首を上にして示す)
+  fitText(x, wt, wx, y + (lv > 0 ? 9 : 17), 494 - wx - tagW, lv > 0 ? 17 : 20, 12, true);
+  if (lv > 0) { x.fillStyle = '#d5deea'; fitText(x, world.cam === 0 ? '矢印＝流される向き（上＝機首）' : '矢印＝流される向き（上＝自分の正面）', wx, y + 25, 494 - wx - tagW, 14, 10, false); }   // 矢印の意味 (風上ではなく風下 = 風が吹いていく向き。上 = 一人称は機首 / 操縦者目線は自分の正面)
   x.textBaseline = 'top';
 }
 
@@ -1803,22 +1820,56 @@ function vrPaint(geo, hex, vary, grad) {                     // 頂点カラー 
 }
 const vrAt = (geo, x, y, z, sx, sy, sz) => { if (sx !== undefined) geo.scale(sx, sy, sz); return geo.translate(x, y, z); };
 
+/** 非インデックスの三角形の法線を「同じ位置の頂点」ごとに平均して滑らかにする (写真素材の質感の表示用。面の見た目の元の法線 = 平らな面は flatShading の材質では使われない)。 */
+function vrSmoothNormals(g) {
+  const p = g.attributes.position, n = g.attributes.normal, c = p.count, acc = new Map(), keys = new Array(c);
+  for (let i = 0; i < c; i++) keys[i] = Math.round(p.getX(i) * 2000) + ',' + Math.round(p.getY(i) * 2000) + ',' + Math.round(p.getZ(i) * 2000);
+  for (let i = 0; i + 2 < c; i += 3) {
+    const ax = p.getX(i + 1) - p.getX(i), ay = p.getY(i + 1) - p.getY(i), az = p.getZ(i + 1) - p.getZ(i), bx = p.getX(i + 2) - p.getX(i), by = p.getY(i + 2) - p.getY(i), bz = p.getZ(i + 2) - p.getZ(i);
+    const nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+    for (let k = 0; k < 3; k++) { let a = acc.get(keys[i + k]); if (!a) { a = [0, 0, 0]; acc.set(keys[i + k], a); } a[0] += nx; a[1] += ny; a[2] += nz; }
+  }
+  for (let i = 0; i < c; i++) { const a = acc.get(keys[i]), l = Math.hypot(a[0], a[1], a[2]) || 1; n.setXYZ(i, a[0] / l, a[1] / l, a[2] / l); }
+  return g;
+}
+/** 幹 (円筒) の頂点の uv を取っておく (vrPaint が uv を捨てる前)。樹皮の写真の貼り付け用: 幹 = 1, u = 周 (2 周り), v = 高さ方向。 */
+function vrTrunkUV(cyl, vRep) { const uv = cyl.attributes.uv, a = new Float32Array(uv.count * 2); for (let i = 0; i < uv.count; i++) { a[i * 2] = uv.getX(i) * 2; a[i * 2 + 1] = uv.getY(i) * vRep; } return a; }
+/** 樹木の頂点属性 aB = (幹なら 0 / 葉なら 1, u, v)。幹の頂点は先頭 (nTrunk 個)。 */
+function vrTreeAttr(geo, nTrunk, uv) {
+  const n = geo.attributes.position.count, b = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { if (i < nTrunk) { b[i * 3] = 0; b[i * 3 + 1] = uv[i * 2]; b[i * 3 + 2] = uv[i * 2 + 1]; } else b[i * 3] = 1; }
+  geo.setAttribute('aB', new THREE.BufferAttribute(b, 3)); return geo;
+}
+/** 針葉樹の1段 (円錐)。裾を交互に長短 (枝の先のぎざぎざ) にして、輪郭を直線の多角形から少し自然に。裾の円盤 (底面) も同じ角度で同じだけ動かすので割れない。 */
+function vrConeGeo(r, h, open) {
+  const rs = 12, g = new THREE.ConeGeometry(r, h, rs, 1, open), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    if (y < 0 && x * x + z * z > 1e-8) { const b = Math.round(Math.atan2(z, x) / 6.2831853 * rs), odd = b & 1, f = (odd ? 0.8 : 1.04) * (0.94 + 0.12 * vrHash(b + 20, (r * 100) | 0, 3)); p.setXYZ(i, x * f, y - (odd ? 0 : 0.06 * h), z * f); }
+  }
+  return g;
+}
 function vrConiferGeo() {
-  const parts = [vrAt(new THREE.CylinderGeometry(0.07, 0.09, 0.28, 6, 1, true), 0, 0.14, 0)];
-  parts[0] = vrPaint(parts[0], 0x5b4230, 0.06);
+  const cyl = vrAt(new THREE.CylinderGeometry(0.07, 0.09, 0.28, 6, 1, true), 0, 0.14, 0), uv = vrTrunkUV(cyl, 1.0), parts = [vrPaint(cyl, 0x5b4230, 0.06)];
   const cones = [[0.10, 0.50, 1.0, 0x2c6a37, false], [0.36, 0.44, 0.74, 0x32763f, true], [0.58, 0.42, 0.48, 0x3a8446, true]];
-  for (const [y0, h, r, hex, open] of cones) parts.push(vrPaint(vrAt(new THREE.ConeGeometry(r, h, 8, 1, open), 0, y0 + h / 2, 0), hex, 0.07, 0.22));
-  return mergeGeos(parts);
+  for (const [y0, h, r, hex, open] of cones) parts.push(vrPaint(vrAt(vrConeGeo(r, h, open), 0, y0 + h / 2, 0), hex, 0.07, 0.22));
+  const nT = parts[0].attributes.position.count;
+  return vrTreeAttr(mergeGeos(parts), nT, uv);
 }
 function vrBroadGeo() {
-  const trunk = vrPaint(vrAt(new THREE.CylinderGeometry(0.06, 0.09, 0.5, 6, 1, true), 0, 0.25, 0), 0x6b4a30, 0.06);
-  const blob = vrPaint(vrAt(new THREE.IcosahedronGeometry(1, 1), 0, 0.66, 0, 1, 0.36, 1), 0x62a647, 0.10, 0.35);
-  return mergeGeos([trunk, blob]);
+  const cyl = vrAt(new THREE.CylinderGeometry(0.06, 0.09, 0.5, 6, 1, true), 0, 0.25, 0), uv = vrTrunkUV(cyl, 1.8), trunk = vrPaint(cyl, 0x6b4a30, 0.06);
+  const ico = new THREE.IcosahedronGeometry(1, 1), ip = ico.attributes.position;           // 球を、位置だけで決まる凹凸でこぶ状に (同じ位置の頂点は同じ量 → 割れない)
+  for (let i = 0; i < ip.count; i++) { const x = ip.getX(i), y = ip.getY(i), z = ip.getZ(i), k = 0.68 + 0.62 * vrFbm(x * 3.4 + y * 2.1, z * 3.4 - y * 2.6, 2, 11); ip.setXYZ(i, x * k, y * k, z * k); }
+  const blob = vrPaint(vrSmoothNormals(vrAt(ico, 0, 0.66, 0, 1, 0.36, 1)), 0x62a647, 0.10, 0.35);
+  return vrTreeAttr(mergeGeos([trunk, blob]), trunk.attributes.position.count, uv);
 }
-function vrRockGeo() {
-  const g = new THREE.IcosahedronGeometry(1, 0), p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) { const k = 0.8 + 0.35 * vrHash((p.getX(i) * 1000) | 0, (p.getZ(i) * 1000) | 0, 5); p.setXYZ(i, p.getX(i) * k, p.getY(i) * k * 0.8, p.getZ(i) * k); }
-  g.computeVertexNormals();
+function vrRockGeo() {                                       // 20面体を細分 (detail 2 = 180 面) して、位置だけで決まるなめらかな凹凸を付ける (同じ位置の頂点は同じ量だけ動く → 割れない)
+  const g = new THREE.IcosahedronGeometry(1, 2), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i), nz = 0.5 * (vrFbm(x * 1.9 + y * 1.3, z * 1.9 - y * 1.1, 2, 5) + vrFbm(y * 2.3 + z * 0.7, x * 1.7 + 4.1, 2, 6));
+    const k = 0.74 + 0.5 * nz; p.setXYZ(i, x * k, y * k * 0.8, z * k);
+  }
+  vrSmoothNormals(g);
   return mergeGeos([vrPaint(g, 0x8b8a84, 0.12, 0.25)]);
 }
 function vrPadGeo() {                                        // 上面は 円(暗)・輪(白)・外周(暗) を同じ高さに隙間なく並べる (重なる面が無い → Zファイトしない)。H はその上の薄い板。全体の上端 = VR_PAD_TOP
@@ -1852,18 +1903,159 @@ function vrSockGeo() {
   return out;
 }
 
+/* ---- 写真素材 (自然の世界だけ。CC0: Poly Haven。出典は assets/CREDITS.txt) ----
+ *  ・空 = 4096x1152 の全天写真 (地平線から上)、地面 = 草2種 + 砂 + 岩 (1024^2 の継ぎ目なしタイル)、幹 = 樹皮。葉の質感だけは小さなキャンバスで生成 (通信なし)。
+ *  ・読み込みは「自然に入る時」だけ (説明画面で自然を選んだ時 / 世界を作る時のどちらか早い方)。MR・MR試験・試験場・みんなで(MR) では一切取りに行かない。
+ *  ・セッションの開始・世界の切替を止めない: 画像は裏で取得・デコード → 1フレームに1枚ずつ GPU へ転送 (renderer.initTexture) → 全部そろったグループだけを「ON」にする (uniform を 1 にするだけ。シェーダーの再コンパイルなし)。
+ *  ・グループ: sky (空) / ground (地面と岩) / trees (幹)。どれかの素材が取れない (404・ネット不通・デコード失敗) グループは黙って従来の見た目 (頂点色・単色の空) のまま。
+ *  ・ドローコール・ジオメトリの数は変えない (既存の材質のシェーダーに数行足すだけ)。テクスチャは全インスタンスで共有。影は足さない。 */
+const VR_SKY_SUN_U = 0.604, VR_SKY_SUN_EL = 47.58 * Math.PI / 180, VR_SKY_VSPAN = 101.25 * Math.PI / 180;   // 空の写真の太陽: 横位置 (0..1) / 仰角 / 写真の上端 (天頂) から下端までの角度
+const VR_SUN_AZ = Math.atan2(VR_SUN.x, -VR_SUN.z);           // 太陽の方位 (シーンの光と同じ向きに空の写真を回す)
+const VR_SUN_PHOTO = new THREE.Vector3(Math.sin(VR_SUN_AZ) * Math.cos(VR_SKY_SUN_EL), Math.sin(VR_SKY_SUN_EL), -Math.cos(VR_SUN_AZ) * Math.cos(VR_SKY_SUN_EL)).normalize();   // 写真の太陽の高さに合わせた光の向き
+const VR_PHOTO_FILES = Object.freeze({ sky: 'sky_kloofendal_4096.jpg', grass: 'ground_grass_1024.jpg', meadow: 'ground_meadow_1024.jpg', sand: 'ground_sand_1024.jpg', rock: 'rock_1024.jpg', bark: 'bark_1024.jpg' });
+const VR_PHOTO_GROUPS = Object.freeze({ sky: ['sky'], ground: ['grass', 'meadow', 'sand', 'rock'], trees: ['bark'] });
+const VR_PHOTO_FOG = 0x9ca1b0;                               // 写真の地平線 (仰角 0.5〜6°) の平均色 = 遠景の霧の色
+const vrPhotoDummy = (() => { const t = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); t.needsUpdate = true; return t; })();
+const vrPhoto = {
+  state: 0, base: 'assets/', t0: 0, ms: 0, requests: 0, err: [], img: {}, tex: {}, queue: [], ok: { sky: false, ground: false, trees: false }, started: { sky: false, ground: false, trees: false },
+  u: { uSkyOn: { value: 0 }, uGround: { value: 0 }, uTrees: { value: 0 } },   // 材質ごとの ON/OFF (0 / 1)
+  t: { uSky: { value: vrPhotoDummy }, uGrass: { value: vrPhotoDummy }, uMeadow: { value: vrPhotoDummy }, uSand: { value: vrPhotoDummy }, uRock: { value: vrPhotoDummy }, uBark: { value: vrPhotoDummy }, uLeaf: { value: vrPhotoDummy } },
+  uLeafAvg: { value: new THREE.Vector3(1, 1, 1) }, uSkyRot: { value: 0 }, uSkyFog: { value: new THREE.Color(VR_PHOTO_FOG) }, uAniso: 4,
+};
+const VR_TEXNAME = { sky: 'uSky', grass: 'uGrass', meadow: 'uMeadow', sand: 'uSand', rock: 'uRock', bark: 'uBark' };
+/** 葉の質感 (生成)。平均 ≒ 0.8 の明暗・色味のばらつき (小さな葉の塊 + 暗い隙間)。継ぎ目なし (端をまたぐ塊は反対側にも描く)。 */
+function vrPhotoLeaf() {
+  const N = 256, cv = document.createElement('canvas'); cv.width = cv.height = N;
+  const x = cv.getContext('2d'), rnd = vrRng(8101);
+  x.fillStyle = '#a8a8a0'; x.fillRect(0, 0, N, N);
+  for (let i = 0; i < 1500; i++) {
+    const px = rnd() * N, py = rnd() * N, r = 2 + rnd() * 6, k = rnd(), v = 120 + (k * 130) | 0, tone = rnd();
+    x.fillStyle = 'rgb(' + (v * (0.92 + 0.16 * tone) | 0) + ',' + v + ',' + (v * (0.78 + 0.2 * (1 - tone)) | 0) + ')';
+    for (let ox = -N; ox <= N; ox += N) for (let oy = -N; oy <= N; oy += N) { if (px + ox < -9 || px + ox > N + 9 || py + oy < -9 || py + oy > N + 9) continue; x.beginPath(); x.ellipse(px + ox, py + oy, r, r * (0.55 + 0.4 * rnd()), rnd() * 3.14, 0, 6.2832); x.fill(); }
+  }
+  for (let i = 0; i < 380; i++) {                              // 暗い隙間 (葉の間から奥の影が見える)
+    const px = rnd() * N, py = rnd() * N, r = 1.5 + rnd() * 3.5; x.fillStyle = 'rgba(20,28,12,0.55)';
+    for (let ox = -N; ox <= N; ox += N) for (let oy = -N; oy <= N; oy += N) { if (px + ox < -6 || px + ox > N + 6 || py + oy < -6 || py + oy > N + 6) continue; x.beginPath(); x.arc(px + ox, py + oy, r, 0, 6.2832); x.fill(); }
+  }
+  const d = x.getImageData(0, 0, N, N).data; let r = 0, g = 0, b = 0;
+  for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+  const m = d.length / 4 * 255, lin = (c) => { c = c / m; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };   // 平均 (sRGB → 線形。近似)
+  vrPhoto.uLeafAvg.value.set(Math.max(0.05, lin(r)), Math.max(0.05, lin(g)), Math.max(0.05, lin(b)));
+  const t = new THREE.CanvasTexture(cv); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 2;
+  return t;
+}
+/** 読み込みを始める (1回だけ)。失敗は黙って無視 (従来の見た目のまま)。 */
+function vrPhotoLoad() {
+  if (vrPhoto.state !== 0) return; vrPhoto.state = 1; vrPhoto.t0 = performance.now();
+  try { vrPhoto.uAniso = Math.max(1, Math.min(8, renderer.capabilities.getMaxAnisotropy())); } catch (e) { vrPhoto.uAniso = 4; }
+  const load = (name) => new Promise((res, rej) => {
+    const im = new Image(); im.decoding = 'async'; vrPhoto.requests++;
+    im.onload = () => { if (!(im.naturalWidth > 0)) { rej(new Error(name + ': empty')); return; } (im.decode ? im.decode().catch(() => {}) : Promise.resolve()).then(() => { vrPhoto.img[name] = im; res(); }); };
+    im.onerror = () => rej(new Error(name + ': load failed'));
+    im.src = vrPhoto.base + VR_PHOTO_FILES[name];
+  });
+  for (const g of Object.keys(VR_PHOTO_GROUPS)) {
+    const names = VR_PHOTO_GROUPS[g];
+    Promise.all(names.map(load)).then(() => {
+      const items = [];
+      for (const n of names) {
+        const t = new THREE.Texture(vrPhoto.img[n]); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.wrapT = n === 'sky' ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
+        t.anisotropy = n === 'sky' ? 1 : n === 'grass' || n === 'meadow' ? vrPhoto.uAniso : Math.min(4, vrPhoto.uAniso); t.needsUpdate = true; vrPhoto.tex[n] = t; items.push(t);
+      }
+      if (g === 'trees') { const lf = vrPhotoLeaf(); vrPhoto.tex.leaf = lf; items.push(lf); }
+      vrPhoto.queue.push({ g, items });
+    }).catch((e) => { vrPhoto.err.push(g + ': ' + (e && e.message)); });
+  }
+}
+/** 毎フレーム (natFrame から): 1フレームに1枚だけ GPU へ転送。グループの最後の1枚が済んだら、そのグループを ON にする。 */
+function vrPhotoPump() {
+  const q = vrPhoto.queue; if (!q.length) return;
+  const it = q[0];
+  try {
+    const t = it.items.shift(); if (t) renderer.initTexture(t);
+    if (!it.items.length) { q.shift(); vrPhotoEnable(it.g); }
+  } catch (e) { q.shift(); vrPhoto.err.push(it.g + ': ' + e); }
+}
+function vrPhotoEnable(g) {
+  for (const n of VR_PHOTO_GROUPS[g]) vrPhoto.t[VR_TEXNAME[n]].value = vrPhoto.tex[n];
+  if (g === 'trees') vrPhoto.t.uLeaf.value = vrPhoto.tex.leaf;
+  vrPhoto.ok[g] = true; vrPhoto.u[g === 'sky' ? 'uSkyOn' : g === 'ground' ? 'uGround' : 'uTrees'].value = 1;
+  if (vrPhoto.ok.sky && vrPhoto.ok.ground && vrPhoto.ok.trees) vrPhoto.ms = performance.now() - vrPhoto.t0;
+  vrPhotoApply();
+}
+/** 写真が使えるようになった分の副作用 (世界を作った後で呼ぶ。何度呼んでもよい): 空の向き・霧の色・太陽の向き・3D の雲を隠す・水の色。 */
+function vrPhotoApply() {
+  if (!vrw.built) return;
+  if (vrPhoto.ok.sky) {
+    vrPhoto.uSkyRot.value = VR_SKY_SUN_U - 0.5 - VR_SUN_AZ / (Math.PI * 2);
+    vrw.fog.color.setHex(VR_PHOTO_FOG);
+    if (vrw.clouds) vrw.clouds.visible = false;                // 写真の雲があるので、低ポリの雲の塊は出さない (動きだけ natClouds が続ける)
+    if (world.id === 1) sun.position.copy(VR_SUN_PHOTO).multiplyScalar(100);
+  }
+  if (vrPhoto.ok.ground && vrw.water) { vrw.water.material.color.setHex(0x356f86); vrw.water.material.specular.setHex(0x7f9bad); }
+}
+/** 地形の材質のシェーダーへ写真の貼り付けを足す。地形は uv を持たないので、ワールド座標 (x,z) で貼る。草 = 2種を 2 つの大きさで重ねて繰り返しを隠し、砂・岩 (急な斜面は横からも) を面ごとの重み (aM) で混ぜる。 */
+function vrTerrainPatch(sh) {
+  Object.assign(sh.uniforms, { uGround: vrPhoto.u.uGround, uGrass: vrPhoto.t.uGrass, uMeadow: vrPhoto.t.uMeadow, uSand: vrPhoto.t.uSand, uRock: vrPhoto.t.uRock });
+  sh.vertexShader = 'attribute vec4 aM;\nattribute vec2 aU;\nvarying vec4 vM;\nvarying vec2 vU;\nvarying vec3 vWP;\nvarying float vNy;\n' + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vM = aM; vU = aU; vWP = position; vNy = normal.y;');
+  sh.fragmentShader = 'uniform float uGround;\nuniform sampler2D uGrass;\nuniform sampler2D uMeadow;\nuniform sampler2D uSand;\nuniform sampler2D uRock;\nvarying vec4 vM;\nvarying vec2 vU;\nvarying vec3 vWP;\nvarying float vNy;\n'
+    + 'vec3 vrTerrainAlbedo() {\n'
+    + '  vec2 p = vWP.xz;\n'
+    + '  vec3 a1 = texture2D( uGrass, p * 0.32 ).rgb, a2 = texture2D( uGrass, p * 0.043 + vec2( 0.37, 0.11 ) ).rgb;\n'
+    + '  vec3 m1 = texture2D( uMeadow, p * 0.27 + vec2( 0.5, 0.2 ) ).rgb, m2 = texture2D( uMeadow, p * 0.037 + vec2( 0.21, 0.63 ) ).rgb;\n'
+    + '  vec3 ga = a1 * mix( vec3( 1.0 ), a2 / vec3( 0.29, 0.25, 0.12 ), 0.55 ), gm = m1 * mix( vec3( 1.0 ), m2 / vec3( 0.083, 0.078, 0.014 ), 0.55 );\n'
+    + '  float wm = clamp( ( 1.0 - vU.y ) * ( 1.35 - smoothstep( 0.2, 0.75, vU.x ) * 1.1 ), 0.0, 1.0 );\n'      // 草: 緑の濃い所 (vU.x 小・乾いていない) ほど牧草 (緑)、薄い所・乾いた所は落ち葉まじりの地面
+    + '  vec3 grass = mix( ga * vec3( 1.0, 1.02, 0.9 ), gm * vec3( 2.6, 2.9, 3.4 ), wm * 0.8 );\n'
+    + '  grass *= mix( vec3( 0.9, 0.95, 0.85 ), vec3( 1.12, 1.08, 0.88 ), vU.x ) * mix( vec3( 1.0 ), vec3( 1.2, 1.05, 0.7 ), vU.y );\n'
+    + '  vec3 sand = texture2D( uSand, p * 0.21 ).rgb;\n'
+    + '  float side = 1.0 - smoothstep( 0.55, 0.9, vNy );\n'
+    + '  vec3 rock = mix( texture2D( uRock, p * 0.23 ).rgb, texture2D( uRock, vec2( vWP.x + vWP.z, vWP.y * 1.4 ) * 0.2 ).rgb, side );\n'
+    + '  vec3 c = grass * max( 0.0, 1.0 - vM.x - vM.y - vM.z ) + sand * vM.x + rock * vM.y * 0.8 + vec3( 0.85, 0.88, 0.92 ) * vM.z;\n'
+    + '  return c * vM.w;\n'
+    + '}\n' + sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\n  if ( uGround > 0.5 ) diffuseColor.rgb = vrTerrainAlbedo();');
+}
+/** 岩の材質: 3 方向からの貼り付け (ワールド座標。岩ごとに模様がずれ、全インスタンスで同じ1枚を共有) + 滑らかな法線。 */
+function vrRockPatch(sh) {
+  Object.assign(sh.uniforms, { uGround: vrPhoto.u.uGround, uRock: vrPhoto.t.uRock });
+  sh.vertexShader = 'varying vec3 vWP;\nvarying vec3 vWN;\nvarying vec3 vSN;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n  { vec4 wp = instanceMatrix * vec4( transformed, 1.0 ); vWP = ( modelMatrix * wp ).xyz; vWN = normalize( mat3( modelMatrix ) * mat3( instanceMatrix ) * objectNormal ); vSN = normalize( transformedNormal ); }');
+  sh.fragmentShader = 'uniform float uGround;\nuniform sampler2D uRock;\nvarying vec3 vWP;\nvarying vec3 vWN;\nvarying vec3 vSN;\n'
+    + sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\n  if ( uGround > 0.5 ) {\n    vec3 w = pow( abs( normalize( vWN ) ), vec3( 4.0 ) ); w /= w.x + w.y + w.z;\n'
+      + '    vec3 t = texture2D( uRock, vWP.zy * 0.55 ).rgb * w.x + texture2D( uRock, vWP.xz * 0.55 + 0.37 ).rgb * w.y + texture2D( uRock, vWP.xy * 0.55 + 0.71 ).rgb * w.z;\n'
+      + '    diffuseColor.rgb = t * clamp( vColor.g / 0.26, 0.55, 1.4 ) * 0.78;\n  }').replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n  if ( uGround > 0.5 ) normal = normalize( vSN );');
+}
+/** 樹木の材質 (針葉樹・広葉樹で共有): 幹 = 樹皮の写真 (aB の uv)、葉 = 生成した葉の質感を 2 方向から貼って明暗・色味にむらを付ける + 滑らかな法線。 */
+function vrTreePatch(sh) {
+  Object.assign(sh.uniforms, { uTrees: vrPhoto.u.uTrees, uBark: vrPhoto.t.uBark, uLeaf: vrPhoto.t.uLeaf, uLeafAvg: vrPhoto.uLeafAvg });
+  sh.vertexShader = 'attribute vec3 aB;\nvarying vec3 vB;\nvarying vec3 vOP;\nvarying vec3 vON;\nvarying vec3 vSN;\n' + sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n  vB = aB; vOP = position; vON = objectNormal; vSN = normalize( transformedNormal );');
+  sh.fragmentShader = 'uniform float uTrees;\nuniform sampler2D uBark;\nuniform sampler2D uLeaf;\nuniform vec3 uLeafAvg;\nvarying vec3 vB;\nvarying vec3 vOP;\nvarying vec3 vON;\nvarying vec3 vSN;\n'
+    + sh.fragmentShader.replace('#include <color_fragment>', '#include <color_fragment>\n  if ( uTrees > 0.5 ) {\n    if ( vB.x < 0.5 ) diffuseColor.rgb = texture2D( uBark, vB.yz ).rgb * clamp( dot( vColor, vec3( 0.3333 ) ) / 0.07, 0.6, 1.4 ) * 0.85;\n'
+      + '    else {\n      vec3 q = vOP * 22.0, w = pow( abs( normalize( vON ) ), vec3( 3.0 ) ); w /= w.x + w.y + w.z;\n      vec3 lf = texture2D( uLeaf, q.zy ).rgb * w.x + texture2D( uLeaf, q.xz + 0.3 ).rgb * w.y + texture2D( uLeaf, q.xy + 0.6 ).rgb * w.z;\n'
+      + '      float cl = dot( texture2D( uLeaf, vOP.xz * 5.0 + vOP.y * 2.6 ).rgb, vec3( 0.3333 ) ) / dot( uLeafAvg, vec3( 0.3333 ) );\n'
+      + '      vec3 c = diffuseColor.rgb * lf / uLeafAvg * mix( 0.7, 1.3, clamp( cl - 0.2, 0.0, 1.0 ) ) * vec3( 0.95, 0.97, 0.8 );\n'
+      + '      float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ); diffuseColor.rgb = mix( vec3( l ), c, 0.7 ) * 0.82;\n    }\n  }').replace('#include <normal_fragment_maps>', '#include <normal_fragment_maps>\n  if ( uTrees > 0.5 && vB.x > 0.5 ) normal = normalize( vSN );');
+}
+
 function vrBuildSky() {
   const mat = new THREE.ShaderMaterial({
-    uniforms: { uHorizon: { value: new THREE.Color(0xcfe3ef) }, uZenith: { value: new THREE.Color(0x3f86d6) }, uGround: { value: new THREE.Color(0xa9c0bd) }, uSunDir: { value: VR_SUN.clone() }, uSunCol: { value: new THREE.Color(0xfff2d2) } },
+    uniforms: { uHorizon: { value: new THREE.Color(0xcfe3ef) }, uZenith: { value: new THREE.Color(0x3f86d6) }, uGround: { value: new THREE.Color(0xa9c0bd) }, uSunDir: { value: VR_SUN.clone() }, uSunCol: { value: new THREE.Color(0xfff2d2) },
+      uSky: vrPhoto.t.uSky, uSkyOn: vrPhoto.u.uSkyOn, uSkyRot: vrPhoto.uSkyRot, uSkyFog: vrPhoto.uSkyFog },
     vertexShader: 'varying vec3 vDir;\nvoid main() {\n  vDir = position;\n  vec4 c = projectionMatrix * modelViewMatrix * vec4( position * 400.0, 1.0 );\n  gl_Position = vec4( c.xy, c.w * 0.99999, c.w );\n}',
-    fragmentShader: '#include <common>\n#include <dithering_pars_fragment>\nuniform vec3 uHorizon; uniform vec3 uZenith; uniform vec3 uGround; uniform vec3 uSunDir; uniform vec3 uSunCol; varying vec3 vDir;\n'
+    fragmentShader: '#include <common>\n#include <dithering_pars_fragment>\nuniform vec3 uHorizon; uniform vec3 uZenith; uniform vec3 uGround; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform sampler2D uSky; uniform float uSkyOn; uniform float uSkyRot; uniform vec3 uSkyFog; varying vec3 vDir;\n'
       + 'void main() {\n  vec3 d = normalize( vDir ); float e = d.y;\n'
-      + '  vec3 col = mix( uHorizon, uZenith, pow( clamp( e, 0.0, 1.0 ), 0.5 ) );\n'
+      + '  vec3 col;\n'
+      + '  if ( uSkyOn > 0.5 ) {\n'                                                                    // 写真の空: 方位 → u (継ぎ目の微分の跳びは fwidth の小さい方で避ける)・仰角 → v。地平線の下は霧の色へ
+      + '    float u = atan( d.x, -d.z ) * 0.15915494 + 0.5 + uSkyRot; float u1 = fract( u ), u2 = fract( u + 0.5 ) - 0.5;\n'
+      + '    float uu = fwidth( u1 ) <= fwidth( u2 ) ? u1 : u2;\n'
+      + '    float v = 1.0 - ( 1.5707963 - asin( clamp( e, -1.0, 1.0 ) ) ) / 1.7671459;\n'
+      + '    col = mix( texture2D( uSky, vec2( uu, clamp( v, 0.0005, 1.0 ) ) ).rgb, uSkyFog, 1.0 - smoothstep( -0.16, -0.005, e ) );\n'
+      + '  } else {\n'
+      + '  col = mix( uHorizon, uZenith, pow( clamp( e, 0.0, 1.0 ), 0.5 ) );\n'
       + '  col = mix( col, uHorizon, ( 1.0 - smoothstep( 0.0, 0.22, abs( e ) ) ) * 0.55 );\n'
       + '  col = mix( col, uGround, 1.0 - smoothstep( -0.3, 0.0, e ) );\n'
       + '  float sd = max( dot( d, uSunDir ), 0.0 );\n'
       + '  col += uSunCol * ( pow( sd, 5.0 ) * 0.16 + pow( sd, 40.0 ) * 0.30 );\n'
       + '  col = mix( col, uSunCol * 1.6, smoothstep( 0.9993, 0.9996, sd ) );\n'
+      + '  }\n'
       + '  gl_FragColor = vec4( col, 1.0 );\n  #include <tonemapping_fragment>\n  #include <colorspace_fragment>\n  #include <dithering_fragment>\n  gl_FragColor.a = 1.0;\n}',
     side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false, dithering: true,   // dithering: 8bit出力でのなだらかな空の縞 (バンディング) を崩す。alpha は必ず 1 (パススルーを完全に覆う)
   });
@@ -1928,23 +2120,28 @@ function vrBuildWorld() {
       if (ddx * ddx + ddz * ddz < rr * rr) shade[cz * N + cx] = Math.max(0.62, shade[cz * N + cx] * 0.88);
     }
   }
-  const nt = N * N * 2, P = new Float32Array(nt * 9), NN = new Float32Array(nt * 9), K = new Float32Array(nt * 9);
+  const nt = N * N * 2, P = new Float32Array(nt * 9), NN = new Float32Array(nt * 9), K = new Float32Array(nt * 9), AM = new Float32Array(nt * 12), AU = new Float32Array(nt * 6);   // AM = 面ごとの素材の重み (砂, 岩, 雪, 明るさ) / AU = (草の緑の濃淡, 乾き)。写真の地面のシェーダー用 (従来の見た目では使わない)
   const cSand = new THREE.Color(0xd2c48c), cG1 = new THREE.Color(0x5aa636), cG2 = new THREE.Color(0x86b94a), cDry = new THREE.Color(0xb9ad5f), cRock = new THREE.Color(0x8f8e88), cAlp = new THREE.Color(0x9aa39c), cSnow = new THREE.Color(0xf3f6f9), cc = new THREE.Color();
   let o = 0;
   const tri = (ax, ay, az, bx, by, bz, qx, qy, qz, cell, face) => {
     const ux = bx - ax, uy = by - ay, uz = bz - az, vx = qx - ax, vy = qy - ay, vz = qz - az;
     let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx; const l = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1; nx /= l; ny /= l; nz /= l;
     const mx = (ax + bx + qx) / 3, my = (ay + by + qy) / 3, mz = (az + bz + qz) / 3;
-    if (my < WL + 1.4) cc.copy(cSand);
+    let wS = 0, wR = 0, wW = 0, mG = 0, dry = 0;
+    if (my < WL + 1.4) { cc.copy(cSand); wS = 1; }
     else {
-      cc.copy(cG1).lerp(cG2, vrFbm(mx / 22, mz / 22, 2, 57));
-      cc.lerp(cDry, smoothstep(vrFbm(mx / 70, mz / 70, 2, 13), 0.52, 0.70) * smoothstep(my, 4, 14) * 0.85);
-      cc.lerp(cAlp, smoothstep(my, 26, 42));
-      cc.lerp(cRock, smoothstep(ny, 0.86, 0.68));
-      cc.lerp(cSnow, smoothstep(my, 42, 49) * smoothstep(ny, 0.70, 0.86));
+      mG = vrFbm(mx / 22, mz / 22, 2, 57);
+      cc.copy(cG1).lerp(cG2, mG);
+      dry = smoothstep(vrFbm(mx / 70, mz / 70, 2, 13), 0.52, 0.70) * smoothstep(my, 4, 14) * 0.85;
+      cc.lerp(cDry, dry);
+      const ta = smoothstep(my, 26, 42), tr = smoothstep(ny, 0.86, 0.68), ts = smoothstep(my, 42, 49) * smoothstep(ny, 0.70, 0.86);
+      cc.lerp(cAlp, ta); cc.lerp(cRock, tr); cc.lerp(cSnow, ts);
+      wR = (0.55 * ta * (1 - tr) + tr) * (1 - ts); wW = ts;   // (写真用) 高山の草地は岩を半分、急斜面は岩、頂上付近は雪
     }
     const b = (0.94 + vrHash(face, cell, 9) * 0.12) * shade[cell];
     for (let k = 0; k < 3; k++) {
+      const vi = (o / 3 + k) * 4, vj = (o / 3 + k) * 2;
+      AM[vi] = wS; AM[vi + 1] = wR; AM[vi + 2] = wW; AM[vi + 3] = b; AU[vj] = mG; AU[vj + 1] = dry;
       NN[o + k * 3] = nx; NN[o + k * 3 + 1] = ny; NN[o + k * 3 + 2] = nz;
       K[o + k * 3] = cc.r * b; K[o + k * 3 + 1] = cc.g * b; K[o + k * 3 + 2] = cc.b * b;
     }
@@ -1958,8 +2155,9 @@ function vrBuildWorld() {
     else { tri(x0, ha, z0, x0, hc, z1, x1, hb, z0, cell, 0); tri(x1, hb, z0, x0, hc, z1, x1, hd, z1, cell, 1); }                           // a,c,b / b,c,d
   }
   const tg = new THREE.BufferGeometry();
-  tg.setAttribute('position', new THREE.BufferAttribute(P, 3)); tg.setAttribute('normal', new THREE.BufferAttribute(NN, 3)); tg.setAttribute('color', new THREE.BufferAttribute(K, 3));
-  const terrain = new THREE.Mesh(tg, new THREE.MeshLambertMaterial({ vertexColors: true }));   // 法線は面ごとに計算済み (非インデックス) → flatShading (画素ごとの微分) は不要
+  tg.setAttribute('position', new THREE.BufferAttribute(P, 3)); tg.setAttribute('normal', new THREE.BufferAttribute(NN, 3)); tg.setAttribute('color', new THREE.BufferAttribute(K, 3)); tg.setAttribute('aM', new THREE.BufferAttribute(AM, 4)); tg.setAttribute('aU', new THREE.BufferAttribute(AU, 2));
+  const tMat = new THREE.MeshLambertMaterial({ vertexColors: true }); tMat.onBeforeCompile = vrTerrainPatch;
+  const terrain = new THREE.Mesh(tg, tMat);   // 法線は面ごとに計算済み (非インデックス) → flatShading (画素ごとの微分) は不要
   terrain.frustumCulled = false; terrain.name = 'vrTerrain'; vrw.terrain = terrain;
 
   // --- 水面 (湖。不透明の単色 + 弱い鏡面) ---
@@ -1970,6 +2168,8 @@ function vrBuildWorld() {
   const mk = (geo, count) => { const m = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), Math.max(1, count)); m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.StaticDrawUsage); return m; };
   const mC = mk(vrConiferGeo(), nc), mB = mk(vrBroadGeo(), nb), mR = mk(vrRockGeo(), nr);
   mC.name = 'vrConifers'; mB.name = 'vrBroadleaf'; mR.name = 'vrRocks';
+  mR.material.onBeforeCompile = vrRockPatch;                  // 写真の質感 (素材が取れた時だけ ON。取れなければ従来の頂点色のまま)
+  if (!nat.sway.on) for (const m of [mC, mB]) m.material.onBeforeCompile = vrTreePatch;   // (?sway=1 の揺れのシェーダーとは併用しない: 揺れ有効の時は樹木は従来の見た目)
   if (nat.sway.on) for (const m of [mC, mB]) { m.material.onBeforeCompile = natSwayBeforeCompile; nat.sway.mats.push(m.material); }   // 樹木の揺れ (14b)。針葉樹・広葉樹だけ (岩・パッドは元のシェーダーのまま)
   const meshes = [mC, mB, mR], cnts = [0, 0, 0], mm = new THREE.Matrix4(), qq = new THREE.Quaternion(), pp = new THREE.Vector3(), ss = new THREE.Vector3(), col = new THREE.Color();
   for (let i = 0; i < n; i++) {
@@ -2041,6 +2241,7 @@ function vrBuildWorld() {
   group.add(sky, terrain, water, mC, mB, mR, pads, poles, socks, clouds);
   group.visible = false; scene.add(group); vrw.group = group;
   vrw.built = true; vrw.buildMs = performance.now() - t0;
+  vrPhotoLoad(); vrPhotoApply();                              // 写真素材の取得を始める (済みなら適用)。MR・試験場では世界を作らないので取りに行かない
   vrw.stats = { hmin, hmax, conifers: nc, broadleaf: nb, rocks: nr, tris: nt };
 }
 
@@ -2187,7 +2388,7 @@ function vrRecallCommands() {
 //  ・FPV (機体目線, world.cam=0): 目を機首カメラの位置へ毎フレーム運ぶ (頭の移動は打ち消す = 部屋の中を歩いても視点は機体に固定。頭の回転はそのまま)。リグのヨーは機首方位に追従。
 //  ・操縦者目線 (world.cam=1): 地面に立つ操縦者として機体を見る。リグは「置いた後は動かさない」: 入室時・視点切替時・リセンター時に1回だけ、
 //    ユーザーの今の立ち位置 → 操縦位置、今向いている向き → 離陸点の方向 になるように置く。以後、頭の動き・歩行はそのまま1:1 (打ち消さない)。ビネットも出さない (視点が動かない)。
-const rigS = { init: false, keep: false, yaw: 0, base: 0, p: new Float64Array(3), pp: new Float64Array(3), pyaw: 0, speed: 0, yawRate: 0, vig: 0,
+const rigS = { init: false, keep: false, yaw: 0, base: 0, p: new Float64Array(3), pp: new Float64Array(3), pyaw: 0, speed: 0, yawRate: 0, acc: 0, vig: 0, ap: 1.2,
   ry: 0, rx: 0, rz: 0, camYaw: 0, camPitch: 0, spot: { x: 0, z: 0, gy: 0, tx: 0, tz: 0 } };   // 操縦者目線: ry,rx,rz = 置いた時のリグのヨーと水平位置 / camYaw,camPitch = デスクトップのカメラが機体を追う向き / spot = 操縦位置
 const _zero = new THREE.Vector3();
 
@@ -2231,7 +2432,8 @@ function vrRigFpv(dt, xrp) {
   // ビネット用の「視点の移動量」 (頭の動きは含めない: 狙いの位置の変化だけ)
   if (dt > 1e-4) {
     const k = 1 - Math.exp(-dt / 0.1), sp = Math.hypot(p[0] - rigS.pp[0], p[1] - rigS.pp[1], p[2] - rigS.pp[2]) / dt, yr = angleDiff(rigS.yaw, rigS.pyaw) / dt;
-    rigS.speed += (sp - rigS.speed) * k; rigS.yawRate += (yr - rigS.yawRate) * k;
+    const ps = rigS.speed; rigS.speed += (sp - rigS.speed) * k; rigS.yawRate += (yr - rigS.yawRate) * k;
+    rigS.acc += (Math.abs(rigS.speed - ps) / dt - rigS.acc) * k;      // 視点の加速度の大きさ [m/s^2] (平滑化した速さの変化率。快適モードのビネット用)
   }
   rigS.pp[0] = p[0]; rigS.pp[1] = p[1]; rigS.pp[2] = p[2]; rigS.pyaw = rigS.yaw;
 }
@@ -2267,7 +2469,7 @@ function vrRigPilot(dt, xrp) {
     buildQuat(camera.quaternion, rigS.camYaw, -rigS.camPitch, 0);
     eyeQ.setFromAxisAngle(Y_AXIS, ry).multiply(camera.quaternion);
   }
-  rigS.speed = 0; rigS.yawRate = 0;                           // 視点は動かない → ビネットなし
+  rigS.speed = 0; rigS.yawRate = 0; rigS.acc = 0;             // 視点は動かない → ビネットなし
 }
 
 // --- 頭に固定した全面フェードとビネット (カメラの子。両目に同じ位置で出る) ---
@@ -2343,14 +2545,20 @@ function vrFail(e) {
 function vrUpdateOverlays(dt) {
   const t = Math.tan(camera.fov * Math.PI / 360), asp = renderer.xr.isPresenting ? 1 : camera.aspect;
   fadeMat.opacity = fade.a; fadeQuad.visible = fade.a > 0.001;
-  if (world.vr && !world.mrx && world.cam === 0 && C.VR_VIGNETTE) {      // ビネットはFPVだけ (操縦者目線は視点が動かない)
+  if (comfortActive()) {                                       // 一人称の快適モード: 常に最小のビネット (枠) + 旋回の速さ・視点の速さ・加速度で濃く、穴が狭く (トンネル)。頭に固定・両目同じ・しきい値でのON/OFFなし (ちらつかない)
+    const dy = clamp(Math.abs(rigS.yawRate) / 0.9, 0, 1), ds = clamp(rigS.speed / 5.5, 0, 1) * 0.7, da = clamp(rigS.acc / 2.5, 0, 1), dyn = Math.max(dy, ds, da);
+    const tv = C.COMFORT_VIG_MIN + (C.COMFORT_VIG_MAX - C.COMFORT_VIG_MIN) * dyn, ta = C.COMFORT_APERTURE + (C.COMFORT_APERTURE_MIN - C.COMFORT_APERTURE) * dyn;
+    const kk = 1 - Math.exp(-dt / (tv > rigS.vig ? 0.12 : 0.45));
+    rigS.vig += (tv - rigS.vig) * kk; rigS.ap += (ta - rigS.ap) * kk;
+  } else if (world.vr && !world.mrx && world.cam === 0 && C.VR_VIGNETTE) {      // ビネットはFPVだけ (操縦者目線は視点が動かない)
+    rigS.ap = C.COMFORT_APERTURE;
     const vs = Math.max(0, rigS.speed - 0.6) / (C.VR_VIG_SPEED - 0.6), vy = Math.max(0, Math.abs(rigS.yawRate) - 0.12) / (C.VR_VIG_YAW - 0.12);
     const target = C.VR_VIGNETTE_MAX * clamp(Math.max(vs, vy), 0, 1);
     rigS.vig += (target - rigS.vig) * (1 - Math.exp(-dt / (target > rigS.vig ? 0.15 : 0.4)));
     if (rigS.vig < 0.003 && target === 0) rigS.vig = 0;
-  } else rigS.vig = 0;
+  } else { rigS.vig = 0; rigS.ap = C.COMFORT_APERTURE; }
   vigMat.opacity = rigS.vig; vigQuad.visible = rigS.vig > 0.004;
-  if (vigQuad.visible) vigQuad.scale.set(t * 1.2 * Math.max(1, asp), t * 1.2, 1);
+  if (vigQuad.visible) vigQuad.scale.set(t * rigS.ap * Math.max(1, asp), t * rigS.ap, 1);
 }
 
 /* ---- 環境音: 風 (ろ過ノイズ。低音量・ゆっくり変動・速度で強まる) ---- */
@@ -2445,7 +2653,7 @@ function vrSceneLook(w) {
     mrxShow(false);
     scene.fog = id === 1 ? vrw.fog : exw.fog;
     hemi.intensity = C.VR_HEMI_I; hemi.color.setHex(0xcfe4ff); hemi.groundColor.setHex(0x6d7a4d);
-    sun.intensity = C.VR_SUN_I; sun.color.setHex(0xfff0d6); sun.position.copy(VR_SUN).multiplyScalar(100);
+    sun.intensity = C.VR_SUN_I; sun.color.setHex(0xfff0d6); sun.position.copy(id === 1 && vrPhoto.ok.sky ? VR_SUN_PHOTO : VR_SUN).multiplyScalar(100);   // 写真の空が使える時は光も写真の太陽の向き
     camera.near = C.VR_NEAR; camera.far = C.VR_FAR; camera.updateProjectionMatrix();
     vrDepth.wait = 1;                                         // 最初のVRフレームを three が描いてから判定する
     applyDepthMeshMode(true);
@@ -2659,7 +2867,8 @@ const nat = {
   note: '', noteT: 0, noteId: 0, recallPrev: false,        // HUDの一言 (残り秒)
   sockPos: null, cx: 0, cz: 0, haze: 0, frameN: 0,         // 吹き流しの位置 (x,y,z × NAT_SOCK_N) / 雲の流れた量 [m] / 霧の増分 / 
   sway: { on: C.NAT_TREE_SWAY || NAT_SWAY_Q, t: { value: 0 }, a: { value: new THREE.Vector3() }, checked: false, ok: true, mats: [] },   // 樹木の揺れ (頂点シェーダーの uniform。針葉樹・広葉樹の材質だけ)
-  sock: { sp: 0, yaw: 0, droop: 0 },                       // 直近の吹き流しの風速・向き・垂れ (検証用)
+  vy: 0,                                                   // 操縦者目線で最後に求めた頭の向き (真上・真下を向いた時の保持)
+  sock: { sp: 0, yaw: 0, droop: 0, fl: 0 },                       // 直近の吹き流しの風速・向き・垂れ (検証用)
 };
 /** 呼び戻しが使えるか (自然で位置安定OFFの間は使えない)。 */
 const recallOk = () => !(world.vr && !world.ex && !nat.hold);
@@ -2728,16 +2937,62 @@ function natEnter() {
   nat.hold = true; nat.wt = 0; nat.wspd = 0; nat.w.set(0, 0, 0); nat.wEst.set(0, 0, 0); nat.wDot.set(0, 0, 0); nat.wFf.set(0, 0, 0);
   nat.note = ''; nat.noteT = 0; nat.recallPrev = false; nat.brake = false; nat.landFf = 0; nat.gPrev = sim.groundY; natReseed();
 }
-/** HUD用: 風が機首に対してどちらへ吹くか [rad] (0 = 機首方向へ押される / +π/2 = 右へ押される)。 */
+/* ---- 一人称の快適モード (酔い軽減)。自然のFPV (world.id===1 && world.cam===0) の間だけ働く入力の整形。操縦者目線・MR・試験場・MR試験には影響しない。
+ *  ・物理の表 (P_VR など) と固定ステップの積分器は一切変えない。stepSim がスティックの値 (input.lx/ly/rx/ry) を差し替えて同じ物理を1歩進め、すぐ元の値へ戻す。
+ *  ・倍率: 水平 COMFORT_V (最大速度 ≒ 55%) / 上下 COMFORT_VY (70%) / 旋回 COMFORT_YAW (50%)。位置安定OFF (ATTI) はスティック=傾きなので、傾きの倍率を空気抵抗の釣り合いから求め、
+ *    最高速度がやはり 55% になるようにする (comfortAttiScale)。
+ *  ・なめらか化: 倍率をかけた後に 時定数 COMFORT_TAU (0.25 s) の一次遅れ (発進・停止がやさしい)。
+ *  ・設定: 説明画面のチェック (保存: localStorage 'mrdrone.comfort') / ?comfort=0|1 (保存より優先)。既定 ON。 */
+const comfort = { on: true, live: false, f: { lx: 0, ly: 0, rx: 0, ry: 0 }, r: { lx: 0, ly: 0, rx: 0, ry: 0 } };
+{
+  let q = null, sv = null;
+  try { q = new URLSearchParams(location.search).get('comfort'); } catch (e) { q = null; }
+  try { sv = localStorage.getItem('mrdrone.comfort'); } catch (e) { sv = null; }
+  comfort.on = q === '0' ? false : q === '1' ? true : sv === '0' ? false : true;
+}
+/** 設定を変える (save: 保存する)。 */
+function comfortSet(on, save) {
+  comfort.on = !!on; comfort.f.lx = comfort.f.ly = comfort.f.rx = comfort.f.ry = 0; hud.hudInit = false;
+  if (save) { try { localStorage.setItem('mrdrone.comfort', comfort.on ? '1' : '0'); } catch (e) { /* 保存できない環境 */ } }
+}
+/** いま快適モードが働いているか: 設定ON・自然・一人称 (機体目線)。 */
+const comfortActive = () => comfort.on && world.vr && world.id === 1 && world.cam === 0;
+/** 位置安定OFF (ATTI): スティック全開の傾きの倍率。傾き θ の釣り合い速度 v は g·tanθ = kd·(DRAG_LIN·v + DRAG_QUAD·v²) (kd = ATTI_DRAG)。全開の釣り合い速度の COMFORT_V 倍を与える傾きの比。 */
+function comfortAttiScale() {
+  const kd = P.ATTI_DRAG, dl = C.DRAG_LIN * kd, dq = P.DRAG_QUAD * kd, th = P.ATTI_TILT;
+  const vOf = (a) => (dq > 0 ? (-dl + Math.sqrt(dl * dl + 4 * dq * a)) / (2 * dq) : a / dl);
+  const v = C.COMFORT_V * vOf(C.G * Math.tan(th)), a = dl * v + dq * v * v;
+  return Math.atan(a / C.G) / th;
+}
+function comfortShape(dt) {
+  const f = comfort.f, r = comfort.r, k = 1 - Math.exp(-dt / C.COMFORT_TAU), sv = attiNow() ? comfortAttiScale() : C.COMFORT_V;
+  r.lx = input.lx; r.ly = input.ly; r.rx = input.rx; r.ry = input.ry;
+  f.lx += (r.lx * C.COMFORT_YAW - f.lx) * k; f.ly += (r.ly * C.COMFORT_VY - f.ly) * k; f.rx += (r.rx * sv - f.rx) * k; f.ry += (r.ry * sv - f.ry) * k;
+  input.lx = f.lx; input.ly = f.ly; input.rx = f.rx; input.ry = f.ry; comfort.live = true;
+}
+function comfortRestore() { const r = comfort.r; input.lx = r.lx; input.ly = r.ly; input.rx = r.rx; input.ry = r.ry; }
+
+/** HUDの風の矢印の「上」の向き [rad] (sim.yaw と同じ向きの定義: 0 = -Z)。一人称 (FPV) = 機首。操縦者目線 = ユーザーの頭の向き (水平成分のみ)。
+ *  真上・真下を向いて前向きが水平に潰れる時は、頭の上方向の水平成分 (見上げると後ろ・見下ろすと前を指す) を足して向きを保つ。 */
+function natViewYaw() {
+  if (world.cam === 0) return sim.yaw;
+  const x = eyeQ.x, y = eyeQ.y, z = eyeQ.z, w = eyeQ.w;
+  const fx = -2 * (x * z + w * y), fy = -2 * (y * z - w * x), fz = -(1 - 2 * (x * x + y * y));   // 前 (0,0,-1)
+  const ux = 2 * (x * y - w * z), uz = 2 * (y * z + w * x);                                         // 上 (0,1,0) の水平成分
+  const sg = fy >= 0 ? 1 : -1, vx = fx - sg * ux, vz = fz - sg * uz;
+  if (vx * vx + vz * vz < 1e-8) return nat.vy;
+  nat.vy = Math.atan2(-vx, -vz); return nat.vy;
+}
+/** HUD用: 風が「矢印の上」に対してどちらへ吹くか [rad] (0 = 上の向きへ押される / +π/2 = 右へ押される)。上 = 一人称は機首、操縦者目線は自分の正面。 */
 function natWindRel() {
-  const s = Math.sin(sim.yaw), c = Math.cos(sim.yaw), w = nat.w;
+  const yaw = natViewYaw(), s = Math.sin(yaw), c = Math.cos(yaw), w = nat.w;
   return Math.atan2(w.x * c - w.z * s, -w.x * s - w.z * c);
 }
 /** HUDの再描画判定用の数値 (自然以外は 0)。位置安定・風の強さ・風速(0.1刻み)・矢印の向き(15°刻み)・一言。 */
 function natHudSig() {
   if (!world.vr || world.ex) return 0;
   const a = ((Math.round(natWindRel() / (Math.PI / 12)) % 24) + 24) % 24;
-  return 1 + (nat.hold ? 1 : 0) + 2 * ex.wind + 6 * Math.round(nat.wspd * 10) + 6000 * a + 150000 * (nat.noteT > 0 ? nat.noteId % 1000 + 1 : 0);
+  return 1 + (nat.hold ? 1 : 0) + 2 * ex.wind + 6 * Math.round(nat.wspd * 10) + 6000 * a + 150000 * (nat.noteT > 0 ? nat.noteId % 1000 + 1 : 0) + (comfortActive() ? 3e11 : 0) + (world.cam === 0 ? 6e11 : 0);   // 末尾 = 快適モードのタグ・矢印の上の意味 (一人称/操縦者目線)
 }
 
 /* ---- 見た目: 吹き流し・雲・霧・風音 (毎フレーム。確保なし) ---- */
@@ -2765,11 +3020,11 @@ const _nM = new THREE.Matrix4(), _nP = new THREE.Vector3(), _nS = new THREE.Vect
 function natSocks(now) {
   const sp = natWindAt(nat.wt, C.NAT_SOCK_H, _nW);
   const yaw0 = sp > 0.02 ? Math.atan2(-_nW.z, _nW.x) : -nat.prev;       // 無風: 常風向へだらりと向く
-  const lift = smoothstep(sp, 0.15, 2.6), droop0 = 1.35 * (1 - lift), ext = 0.72 + 0.28 * lift, fl = 0.35 + 0.65 * smoothstep(sp, 0.2, 1.6);
-  nat.sock.sp = sp; nat.sock.yaw = yaw0; nat.sock.droop = droop0;
+  const lift = smoothstep(sp, 0.15, 2.6), droop0 = 1.45 * (1 - lift), ext = 0.72 + 0.28 * lift, fl = smoothstep(sp, 0.03, 1.6);   // はためきの振れ幅 fl は風速に比例して 0 へ (突風で風速が落ちれば小さく、無風 (sp = 0) では完全に 0 = ぴたりと垂れて揺れない)
+  nat.sock.sp = sp; nat.sock.yaw = yaw0; nat.sock.droop = droop0; nat.sock.fl = fl;
   const m = vrw.socks, sk = nat.sockPos;
   for (let i = 0, ns = C.NAT_SOCK_N; i < ns; i++) {
-    const ph = now * 6.3 + i * 1.7, yaw = yaw0 + 0.045 * fl * Math.sin(now * 4.1 + i * 2.3), droop = clamp(droop0 + 0.10 * fl * Math.sin(ph) + 0.05 * fl * Math.sin(now * 11.0 + i), 0, 1.45);
+    const ph = now * 6.3 + i * 1.7, yaw = yaw0 + 0.045 * fl * Math.sin(now * 4.1 + i * 2.3), droop = clamp(droop0 + 0.10 * fl * Math.sin(ph) + 0.05 * fl * Math.sin(now * 11.0 + i), 0, 1.5);
     _nQ.setFromAxisAngle(Y_AXIS, yaw); _nQz.setFromAxisAngle(_nZ, -droop); _nQ.multiply(_nQz);
     _nM.compose(_nP.set(sk[i * 3], sk[i * 3 + 1], sk[i * 3 + 2]), _nQ, _nS.set(ext, 1, 1)); m.setMatrixAt(i, _nM);
   }
@@ -2795,6 +3050,7 @@ function natClouds(dt) {
 /** 毎フレーム (自然・パイロットも観戦も): 吹き流し・雲・霧。観戦(PC)は物理が無いので風の時計をここで進める。 */
 function natFrame(dt, now, spectator) {
   if (!vrw.built || !vrw.socks || nat.fxOff) return;
+  vrPhotoPump();                                              // 写真素材: 1フレームに1枚だけ GPU へ転送 (例外は中で止める)
   try { natFrameBody(dt, now, spectator); } catch (e) { nat.fxOff = true; nat.fxErr = String(e); }   // 見た目だけの更新。万一の例外で VR を落とさない (以後この更新だけ止める。飛行・風の物理は続く)
 }
 function natFrameBody(dt, now, spectator) {
@@ -8608,6 +8864,7 @@ if (DEBUG) {
     stepSim, collide, updatePlanes, recomputeRoom, readXRInputs, placeHud, updateHeadXR, pickWaypoint, behindWall, surfaceHeightAt, surfaceClearance,
     toggleFlight, toggleMode, toggleHud, toggleMonitor, setMonitor, renderMonitor, updateFpvCamera, syncRoomModel, rebuildRoomModel, roomModelStale, resetWorld, placeDroneInitial, initAudio, stopAudio, frame,
     // --- 自然の位置安定・風 ---
+    comfort, comfortSet, comfortActive, comfortAttiScale, natViewYaw, vrPhoto, vrPhotoLoad, vrPhotoPump, VR_SUN_PHOTO,
     nat, natWindAt, natFrame, natPre, natSetSeed, natReseed, natSetHold, natToggleAtti, natCycleWind, natEnter, natSocks, natClouds, natHudSig, natWindRel, natNote, recallOk, attiNow, windVelStep, landHere, drawHudNatStrip, drawHudNat, windUpdate,
     // --- 試験場 ---
     ex, exw, EX_COURSES, EX_ITEMS, EX_TXT, TX, EXP, EX_PASS, EX_RUN, EX_ATL, exDump, exCellPos, exOrigin, exOwnSlot, exPlan, exRestart, exEnter, exLeave, exStep, exZone, exZoneRaw, exWindAt, exSetWind, exCycleWind, exSpeak, exJudgeFail, vrRigResnap, exArmToggle, exCycleItem, exToggleHold, exToggleDisp, exRestartHold, exDemoToggle, exDemoStop, exSyncCells, exDrawHud, exBoardData, exBoardTick, exFrame, exAtti, exInstr, exRem, exDemoCommands, exBuildWorld, exAvatar, exTxId, exHudSig, exPlaceAtHome, exResetDrone, exLanded, exYBtn, exY, exLTrig, exL, exSetItem, exFinish, exTrigger, exBegin, exDone, EX_RES_NAME, pilotScaleUpdate, worldId, vrPilotSpot, vrRigPilot, exPost, exPre, exFault, exFail, exBestAll, exTopFaults, exRunLine, exSay, exAnnounce, exToast, exApplyDisp, exCapUpdate, exBoardDraw, exBestSave, EX_VOICE, exSolo() { return net.on; },
@@ -8669,7 +8926,8 @@ const UI_KB_EXAM = [['T', '始動 → ↑ で離陸'], ['Y', '科目の切替'],
 const UI_KB_MR = [['WASD', '前後左右'], ['矢印キー', '上下・旋回'], ['T', '離着陸'], ['M', '自動 ⇄ 手動'], ['R', '呼び戻し'], ['H', 'HUD表示'], ['V', 'ドローン視点'], ['N', 'ワールド切替'], ['Backspace', '終了メニュー（Enter = 終了してメニューへ / Esc = 続ける）'], ['ドラッグ', '視点']];
 const UI_KB_VIEW = [['ドラッグ', '回転'], ['ホイール', 'ズーム'], ['右ドラッグ / Shift+ドラッグ', '移動'], ['F', '全体表示'], ['T', '真上'], ['N', 'MR部屋 → VR自然 → 試験場の表示切替'], ['1〜9, 0 / 名簿の行', '追尾'], ['Esc', '追尾解除']];
 const UI_MR_ROWS = [['A', '自動 ⇄ 手動の切替'], ['B', '離陸 / 着陸'], ['右トリガー長押し', '手元へ呼び戻し'], ['X', 'HUD表示の切替'], ['左トリガー', 'ドローン視点のモニター'], UI_SWITCH, UI_EXIT];
-const UI_NAT_ROWS = [['B', '離陸 / 着陸'], ['A', '自動 ⇄ 手動の切替（位置安定OFF中は手動のみ）'], ['左トリガー', '位置安定 ON/OFF（既定ON。OFFだと止まらず風に流されます）'], ['左Y', '風の強さ（無風 → 弱 → 中）'], ['左スティック押込み', '視点切替（操縦者目線 ⇄ 一人称）'], ['右トリガー長押し', '手元へ呼び戻し'], ['X', 'HUD表示の切替'], UI_SWITCH, UI_EXIT];
+const UI_CREDIT = '空・地面・樹皮・岩の写真素材: Poly Haven（CC0）';
+const UI_NAT_ROWS = [['B', '離陸 / 着陸'], ['A', '自動 ⇄ 手動の切替（位置安定OFF中は手動のみ）'], ['左トリガー', '位置安定 ON/OFF（既定ON。OFFだと止まらず風に流されます）'], ['左Y', '風の強さ（無風 → 弱 → 中）'], ['左スティック押込み', '視点切替（操縦者目線 ⇄ 一人称。一人称は快適モードで速さ・旋回を抑えます）'], ['右トリガー長押し', '手元へ呼び戻し'], ['X', 'HUD表示の切替'], UI_SWITCH, UI_EXIT];
 const UI_EXAM_ROWS = [['B', 'モーター始動 / 停止（スロットルで離陸・降下し、接地すれば着陸）'], ['左Y', '科目の切替'], ['A', 'お手本飛行'], ['左トリガー', '本番 / 補助表示（長押しでやり直し）'], ['右トリガー（短押し）', '直前の飛行を再生（着陸してモーターを止めている時）'], ['左X 1秒長押し', '記録ボード（着陸してモーターを止めている時）'], UI_SWITCH, UI_EXIT];
 const UI_MRX_ROWS = [['右トリガー', '配置: 今の立ち位置と向きでコースを置く'], ['左Y', '配置中は縮尺 / 配置後は科目'], ['左スティック左右', '配置中: 科目の切替'], ['右スティック', '配置中: 位置の微調整（右グリップを押しながら左右 = 向き）'], ['右トリガー1秒長押し', '配置し直し（モーター停止中）'], ['B', 'モーター始動 / 停止'], ['A', 'お手本飛行'], ['左トリガー', '本番 / 補助表示（長押しでやり直し）'], UI_SWITCH, UI_EXIT];
 const UI_MULTI_ROWS = UI_MR_ROWS.slice(0, 5).concat([['左Y', '位置合わせの開始 / 中止（1.5秒長押しで解除）'], ['右トリガー', '位置合わせ中: 点を記録'], UI_SWITCH, UI_EXIT]);
@@ -8681,10 +8939,11 @@ const UI_MODES = {
     desc: ['Quest のパススルーで、現実の部屋に仮想のドローンが現れます。', '自動モードでは部屋の中を自由に飛び回り、手動モードではコントローラーで操縦します。', '壁や天井、あなたの頭を避けて飛びます。左トリガーでドローン視点のモニターも出せます。'],
     need: ['広めの場所で、周囲の安全を確認してから開始してください。', '部屋の壁や床が認識されない時は、左スティック押込みで「スペース設定」を開けます。', UI_HAND],
     ctl: (sm) => uiStickRows(sm).concat(UI_MR_ROWS), kb: UI_KB_MR, more: [] },
-  nature: { kind: 'VR', world: 1, room: false, fields: ['stick', 'wind'], pcFields: ['wind'], start: 'VRを開始',
-    desc: ['草原と湖と森が広がる景色の中を、VRで自由に飛行します。', '離着陸場に立って機体を目で追う「操縦者目線」と、機体からの「一人称」を切り替えられます。', '風の強さと位置安定（ON/OFF）で、飛ばし心地を変えられます。'],
-    need: [UI_WARN_VR, '広めの場所で、周囲の安全を確認してから開始してください。', '酔いやすい人は、操縦者目線（既定）で飛ばしてください。', UI_HAND],
-    ctl: (sm) => uiStickRows(sm).concat(UI_NAT_ROWS), kb: UI_KB_MR.concat([['G', '位置安定 ON/OFF'], ['Y', '風の強さ（無風 → 弱 → 中）'], ['C', '視点（操縦者目線 ⇄ 一人称）']]), more: [] },
+  nature: { kind: 'VR', world: 1, room: false, fields: ['stick', 'wind', 'comfort'], pcFields: ['wind', 'comfort'], start: 'VRを開始',
+    credit: UI_CREDIT,
+    desc: ['写真素材を使った、草原と湖と森が広がる景色の中を、VRで自由に飛行します。', '離着陸場に立って機体を目で追う「操縦者目線」と、機体からの「一人称」を切り替えられます。', '風の強さと位置安定（ON/OFF）で、飛ばし心地を変えられます。一人称は「快適モード」（既定ON）で、速さと旋回を抑え、視界の周りを暗くして酔いにくくします。'],
+    need: [UI_WARN_VR, '広めの場所で、周囲の安全を確認してから開始してください。', '酔いやすい人は、操縦者目線（既定）で飛ばしてください。一人称では快適モードをONのままにしてください。', UI_HAND],
+    ctl: (sm) => uiStickRows(sm).concat(UI_NAT_ROWS), kb: UI_KB_MR.concat([['G', '位置安定 ON/OFF'], ['Y', '風の強さ（無風 → 弱 → 中）'], ['C', '視点（操縦者目線 ⇄ 一人称。一人称は快適モードで速さ・旋回を抑えます）']]), more: [] },
   exam: { kind: 'VR', world: 2, room: false, fields: ['name', 'stick', 'wind'], pcFields: ['name', 'wind'], start: 'VRを開始',
     desc: ['無人航空機操縦士（一等・二等）の実地試験で出される6科目を、VRの練習場で練習します。', '地面に立ち、試験員の指示（音声と字幕）に従って飛ばします。', '判定のある試験は 1 回ごとに記録され、終了後に自動のアドバイスが出ます（公式の採点・指導ではありません）。'],
     need: [UI_WARN_VR, 'コントローラーが必要です。', '記録は受験者名ごとに分かれます（空欄は「ゲスト」）。', '広めの場所で、周囲の安全を確認してから開始してください。'],
@@ -8727,6 +8986,9 @@ const UI_MODES = {
     if (exWindLv(wv) < 0) { try { wv = localStorage.getItem('mrdrone.wind') || ''; } catch (e) { wv = ''; } }
     exSetWind(exWindLv(wv) < 0 ? C.EX_WIND_DEFAULT : exWindLv(wv), false); }
   windEl.addEventListener('change', () => { exSetWind(windEl.value, true); });
+  const comfortEl = document.getElementById('comfortsel');   // 一人称の快適モード: ?comfort=0|1 → 前回の値 → ON (comfort の初期値は定義の所で決まる)。選び直したら保存
+  comfortEl.checked = comfort.on;
+  comfortEl.addEventListener('change', () => { comfortSet(comfortEl.checked, true); });
   const currentRoom = () => roomEl.value.trim();
   const commitRoom = () => { const r = currentRoom(); try { localStorage.setItem(ROOM_KEY, r); } catch (e) { /* ignore */ } return r; };
 
@@ -8741,7 +9003,7 @@ const UI_MODES = {
   const nameOf = (id) => { const c = cardOf(id); const n = c && c.querySelector('.nm'); return n ? n.textContent : id; };
   const dTitle = $('dTitle'), dKind = $('dKind'), dDesc = $('dDesc'), dNeed = $('dNeed'), dCtl = $('dCtl'), dCtlNote = $('dCtlNote'), dCtlH = $('dCtlH'), dCtlTh1 = $('dCtlTh1'), dSet = $('dSet');
   const roomHint = $('roomHint'), backBtn = $('back');
-  const wraps = { name: $('nameWrap'), room: $('roomWrap'), stick: $('stickWrap'), wind: $('windWrap') };
+  const wraps = { name: $('nameWrap'), room: $('roomWrap'), stick: $('stickWrap'), wind: $('windWrap'), comfort: $('comfortWrap') };
   let cur = null, screen = 'menu', starting = false;
   const isPC = !supported;
   if (supported) { const wc = cardOf('watch'); if (wc) wc.hidden = true; }   // 観戦はPC専用 (Quest では出さない)
@@ -8792,6 +9054,8 @@ const UI_MODES = {
     const f = fieldsOf(id);
     for (const k of Object.keys(wraps)) wraps[k].hidden = !f.includes(k);
     dSet.hidden = f.length === 0;
+    { const cr = $('dCredit'); cr.textContent = m.credit || ''; cr.hidden = !m.credit; }
+    if (id === 'nature') vrPhotoLoad();                         // 自然の説明画面を開いたら、写真素材の読み込みを裏で始める (MR・他のワールドでは読まない)
     btn.textContent = startLabel(id);
     syncStart();
     scr.detail.classList.toggle('roomfirst', needsRoom(id));
@@ -8815,7 +9079,7 @@ const UI_MODES = {
     body.appendChild(uiEl('p', '', '現在のスティックの割り当て: モード' + stickMode + '（説明画面の「スティックの割り当て」で変えられます）。'));
     sec('共通（全ワールド）', uiStickRows(stickMode).concat([['右スティック長押し（0.5秒）', 'ワールド切替（MR → MR試験 → 自然 → 試験場 → MR）'], ['左スティック押込み', 'VR: 視点切替（操縦者目線 ⇄ 一人称） / MR: 平面が無い時はスペース設定'], UI_EXIT]), [UI_HAND]);
     sec(nameOf('mr'), UI_MR_ROWS.slice(0, 5).concat(UI_MODES.mr.more), ['ドローン視点のモニターは左トリガーで出し入れします。']);
-    sec(nameOf('nature'), UI_NAT_ROWS.slice(0, 7), ['位置安定をOFFにすると、止まらず風に流されます。自動飛行と帰還は使えません。']);
+    sec(nameOf('nature'), UI_NAT_ROWS.slice(0, 7), ['位置安定をOFFにすると、止まらず風に流されます。自動飛行と帰還は使えません。', '一人称の快適モード（説明画面で切替・既定ON）: 一人称の時だけ、最大速度の約55%・上下の約70%・旋回の約50%に抑え、スティックの入力をなめらかにし、視界の周りを暗くします。HUDに「快適」と出ます。', 'HUDの風の矢印: 操縦者目線は「上＝自分の正面」、一人称は「上＝機首」。']);
     sec(nameOf('exam'), UI_EXAM_ROWS.slice(0, 6).concat(UI_MODES.exam.more), ['試験員の指示（音声と字幕）に従って飛ばします。判定のある試験は 1 回ごとに記録され、終了後に自動のアドバイスが出ます（公式の採点・指導ではありません）。名前は説明画面の「受験者名」で記録を分けます。']);
     sec(nameOf('mrexam'), UI_MRX_ROWS.slice(0, 8), ['MR試験: 床にコースを縮尺で描きます。必要な広さは原寸で幅21m×奥行15m（1/2 なら 10.5m×7.5m、1/3 なら 7m×5m）。HUDの高度と速度は本番の寸法に換算した値（実寸は小さく併記）です。壁や家具に重なると赤い枠と警告が出ます。コントローラーが必要です。']);
     sec(nameOf('multi'), [['左Y', '位置合わせの開始 / 中止（1.5秒長押しで手動の位置合わせを解除）'], ['右トリガー', '位置合わせ中: 点を記録（全員が同じ2点を同じ順に）']], ['VRワールド（自然・試験場）では位置合わせは不要です。chrome://flags の「WebXR experiments」が有効なら、位置合わせは自動です。']);

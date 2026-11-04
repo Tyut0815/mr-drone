@@ -1,0 +1,28 @@
+Photo assets used by the 自然 (nature) world of MR Drone (v1.3)
+===============================================================
+
+All files below are CC0 1.0 (public domain dedication) from Poly Haven (https://polyhaven.com).
+Attribution is not required by CC0; it is given here as a courtesy. License: https://creativecommons.org/publicdomain/zero/1.0/
+No Poly Haven API was used; the files were downloaded directly from https://dl.polyhaven.org and resized / recompressed
+(JPEG) for the Quest: the sky was cropped to its upper part, the textures were reduced from 2K to 1K.
+
+File (in this folder)         Poly Haven asset                              Author(s)                       Source
+----------------------------  --------------------------------------------  ------------------------------  -------------------------------------------------------------------------
+sky_kloofendal_4096.jpg       Kloofendal 48d Partly Cloudy (Pure Sky)       Greg Zaal, Jarod Guest          https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky
+                              (tonemapped JPG, 4096 px wide, top 1152 rows)
+ground_grass_1024.jpg         Forrest Ground 01 (diffuse)                   Rob Tuytel                      https://polyhaven.com/a/forrest_ground_01
+ground_meadow_1024.jpg        Rocky Terrain 02 (diffuse)                    Amal Kumar                     https://polyhaven.com/a/rocky_terrain_02
+ground_sand_1024.jpg          Coast Sand 01 (diffuse)                       Rob Tuytel                      https://polyhaven.com/a/coast_sand_01
+rock_1024.jpg                 Rock Boulder Dry (diffuse)                    Dimitrios Savva, Rico Cilliers  https://polyhaven.com/a/rock_boulder_dry
+bark_1024.jpg                 Bark Brown 02 (diffuse)                       Rob Tuytel                      https://polyhaven.com/a/bark_brown_02
+
+Direct download URLs (as fetched):
+  https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/kloofendal_48d_partly_cloudy_puresky.jpg
+  https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/forrest_ground_01/forrest_ground_01_diff_2k.jpg
+  https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rocky_terrain_02/rocky_terrain_02_diff_2k.jpg
+  https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/coast_sand_01/coast_sand_01_diff_2k.jpg
+  https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_boulder_dry/rock_boulder_dry_diff_2k.jpg
+  https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/bark_brown_02/bark_brown_02_diff_2k.jpg
+
+ambientCG (https://ambientcg.com, also CC0) is not used in this version.
+The leaf texture of the trees is generated at run time (canvas) and is not a downloaded asset.
