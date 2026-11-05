@@ -1,4 +1,4 @@
-Photo assets used by the 自然 (nature) world of MR Drone (v1.3)
+Photo assets used by the 自然 (nature) world of MR Drone (v1.4)
 ===============================================================
 
 All files below are CC0 1.0 (public domain dedication) from Poly Haven (https://polyhaven.com).
@@ -8,8 +8,8 @@ No Poly Haven API was used; the files were downloaded directly from https://dl.p
 
 File (in this folder)         Poly Haven asset                              Author(s)                       Source
 ----------------------------  --------------------------------------------  ------------------------------  -------------------------------------------------------------------------
-sky_kloofendal_4096.jpg       Kloofendal 48d Partly Cloudy (Pure Sky)       Greg Zaal, Jarod Guest          https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky
-                              (tonemapped JPG, 4096 px wide, top 1152 rows)
+sky_land_4096.jpg             Kloofendal 48d Partly Cloudy                  Greg Zaal, Jarod Guest          https://polyhaven.com/a/kloofendal_48d_partly_cloudy
+                              (tonemapped JPG, 8192 -> 4096 px wide, top 1152 rows: sky + the real wooded horizon down to 11 deg below it)
 ground_grass_1024.jpg         Forrest Ground 01 (diffuse)                   Rob Tuytel                      https://polyhaven.com/a/forrest_ground_01
 ground_meadow_1024.jpg        Rocky Terrain 02 (diffuse)                    Amal Kumar                     https://polyhaven.com/a/rocky_terrain_02
 ground_sand_1024.jpg          Coast Sand 01 (diffuse)                       Rob Tuytel                      https://polyhaven.com/a/coast_sand_01
@@ -17,12 +17,36 @@ rock_1024.jpg                 Rock Boulder Dry (diffuse)                    Dimi
 bark_1024.jpg                 Bark Brown 02 (diffuse)                       Rob Tuytel                      https://polyhaven.com/a/bark_brown_02
 
 Direct download URLs (as fetched):
-  https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/kloofendal_48d_partly_cloudy_puresky.jpg
   https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/forrest_ground_01/forrest_ground_01_diff_2k.jpg
   https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rocky_terrain_02/rocky_terrain_02_diff_2k.jpg
   https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/coast_sand_01/coast_sand_01_diff_2k.jpg
   https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/rock_boulder_dry/rock_boulder_dry_diff_2k.jpg
   https://dl.polyhaven.org/file/ph-assets/Textures/jpg/2k/bark_brown_02/bark_brown_02_diff_2k.jpg
+
+v1.4 additions (also CC0 1.0, Poly Haven, fetched directly from dl.polyhaven.org; no API used)
+-----------------------------------------------------------------------------------------------
+The trees and the grass are not shipped as 3D models: each was rendered OFFLINE (three.js, lit from the sun direction of the sky photo, with the model's
+own diffuse + normal textures) into 8 azimuth views and packed into an alpha atlas ("impostor"); only the resulting images are in this folder.
+The Poly Haven models do not carry the artist name in the files that were downloaded; the artist credit is on each asset page below.
+
+File (in this folder)         Poly Haven asset(s) rendered into it                                   Source
+----------------------------  ---------------------------------------------------------------------  --------------------------------------------
+tree_conifer_atlas.webp       Fir Sapling (fir_sapling a/b/c; a stand of 5 trees)                    https://polyhaven.com/a/fir_sapling
+                              Pine Sapling Small (pine_sapling_small a/b/c; a stand of 4 trees)      https://polyhaven.com/a/pine_sapling_small
+                              2 species x 8 views, 4x4 atlas, 1840x2048
+tree_broad_atlas.webp         Tree Small 02 (tree_small_02)                                          https://polyhaven.com/a/tree_small_02
+                              Jacaranda Tree (jacaranda_tree)                                        https://polyhaven.com/a/jacaranda_tree
+                              2 species x 8 views, 4x4 atlas, 2736x2048
+grass_cards.webp              Grass Medium 01 (grass_medium_01: large_a, mid_b, small_a, tall_a)     https://polyhaven.com/a/grass_medium_01
+                              4 clumps, 512x512
+
+Direct download URLs (as fetched; the 1k glTF, its .bin, and the 1k diffuse PNG (with alpha) / normal JPG of every material):
+  https://dl.polyhaven.org/file/ph-assets/Models/gltf/1k/<slug>/<slug>_1k.gltf  (+ <slug>.bin)
+  https://dl.polyhaven.org/file/ph-assets/Models/png/1k/<slug>/<slug>_<material>_diff_1k.png
+  https://dl.polyhaven.org/file/ph-assets/Models/jpg/1k/<slug>/<slug>_<material>_nor_gl_1k.jpg
+  https://dl.polyhaven.org/file/ph-assets/HDRIs/extra/Tonemapped%20JPG/kloofendal_48d_partly_cloudy.jpg
+
+bark_1024.jpg is now only used as the fallback when the tree atlases cannot be fetched (it is not requested otherwise).
 
 ambientCG (https://ambientcg.com, also CC0) is not used in this version.
 The leaf texture of the trees is generated at run time (canvas) and is not a downloaded asset.
