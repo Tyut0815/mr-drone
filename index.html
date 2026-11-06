@@ -1707,7 +1707,7 @@ const vrw = {
   heights: null, pads: null, tn: 0, nx: 0, ny: 1, nz: 0,
   nTree: 0, tx: null, tz: null, ty: null, th: null, tr: null, tk: null, cellStart: null, cellIdx: null, gridN: 0,
   contacts: 0, treeHits: 0, buildMs: 0, compileMs: 0, errN: 0, stats: null, avoidY: 0, tick: 0,
-  imp: null, blobs: null, grass: null, nGrass: 0,             // v1.4: 木の写真板 (針葉樹・広葉樹の2本) / 木の根元の影 / 足元の草の板
+  imp: null, blobs: null, grass: null, nGrass: 0,             // v1.4: 木の写真板 (針葉樹・広葉樹の2本) / (木の根元の影: 使わない = 地面の世界の画像に焼く) / 足元の草の板
   poles: null, socks: null, cloudOff: null, cloudQ: null, cloudC: null, cloudF: null, cloudP: null,   // 吹き流し (ポール・本体) と雲の流れ (14b)
 };
 const VR_CELL = 16;                                          // 樹木の空間グリッド [m]
@@ -1936,9 +1936,11 @@ function vrSockGeo() {
  *      空   = 写真を 1 回だけ取得。方位・仰角 → uv は頂点で計算 (球の uv は継ぎ目の頂点が二重なので、画素ごとの三角関数・微分は不要)。
  *  ・写真が使えない間・使えない時は HEAD と同じ材質のまま (シェーダーに写真の分岐は入れない)。グループの素材がそろったら、写真用の別の材質に差し替える
  *    (自然の世界が見えている時は compileAsync = KHR_parallel_shader_compile で裏でコンパイルしてから差し替える → 世界の中でもフレームを止めない)。
- *  ・セッションの外 (開始画面) で素材がそろえば、その場で GPU へ転送する。XR の最中なら自然の世界にいる間だけ 1 フレームに 1 グループずつ転送する。
+ *  ・セッションの外 (開始画面) で素材がそろえば、その場で GPU へ転送する。自然の世界にいる間 (XR でも PC でも) は 1 フレームに画像 1 枚ずつ転送する。
  *  ・グループ: sky (空) / ground (地面と岩) / trees (幹と葉)。どれかの素材が取れない (404・ネット不通・デコード失敗) グループは黙って従来の見た目のまま。
- *  ・ドローコールの数は増やさない (材質と、空だけは球の分割を差し替える)。テクスチャは全インスタンスで共有。影は足さない。 */
+ *  ・ドローコールの数は増やさない (材質と、空だけは球の分割を差し替える)。テクスチャは全インスタンスで共有。影は足さない。
+ *  v1.4: 樹木は木の写真板 (imp: 2 枚の画像) に、足元に草 (cards)、地面に世界全体の画像 (土の斑・木の根元の影) を足した。trees (上の樹木) は imp が取れない時だけの予備。
+ *    空は「地平線の 12.7° 下まで」の写真の球 + 霧の色だけの底 (1 ドローコール増)。描く順は vrBuildSky の VR_SKY_ORDER の説明を参照 (空は不透明の物の後、写真板・草は空の後)。 */
 const VR_SKY_SUN_U = 0.604, VR_SKY_SUN_EL = 47.58 * Math.PI / 180;   // 空の写真の太陽: 横位置 (0..1) / 仰角。写真は天頂から下へ 101.25° (= 180/1.7777778) まで
 const VR_SUN_AZ = Math.atan2(VR_SUN.x, -VR_SUN.z);           // 太陽の方位 (シーンの光と同じ向きに空の写真を回す)
 const VR_SUN_PHOTO = new THREE.Vector3(Math.sin(VR_SUN_AZ) * Math.cos(VR_SKY_SUN_EL), Math.sin(VR_SKY_SUN_EL), -Math.cos(VR_SUN_AZ) * Math.cos(VR_SKY_SUN_EL)).normalize();   // 写真の太陽の高さに合わせた光の向き
@@ -1950,7 +1952,10 @@ const vrPhoto = {
   state: 0, base: 'assets/', t0: 0, ms: 0, requests: 0, err: [], img: {}, tex: {}, queue: [], ok: { sky: false, ground: false, trees: false, imp: false, cards: false }, failed: { sky: false, ground: false, trees: false, imp: false, cards: false },
   u: { uSkyOn: { value: 0 }, uGround: { value: 0 }, uTrees: { value: 0 } },   // (検証用) 写真の材質へ差し替え済みのグループ = 1
   uLeafAvg: { value: new THREE.Vector3(1, 1, 1) }, uSkyRot: { value: 0 }, uSkyFog: { value: new THREE.Color(VR_PHOTO_FOG) }, uAniso: 4,
+  uShadow: { value: 0 },                                       // 地面の写真の材質: 木の根元の影 (世界の画像の赤) を効かせる = 1 (木の写真板が使える時だけ)
 };
+const VR_GW_N = 1024;                                          // 地面の写真の材質が読む世界全体の画像 (600 m 四方) の一辺 [画素]: 赤 = 木の根元の影 / 緑・青 = 土の斑の 2 つの周波数のむら
+const VR_GRASS_N = 2000;                                       // 足元の草の株の数 (上限。v1.4 の最初は 2800 の十字の板)
 /** 葉の質感 (生成)。平均 ≒ 0.8 の明暗・色味のばらつき (小さな葉の塊 + 暗い隙間)。継ぎ目なし (端をまたぐ塊は反対側にも描く)。S×S のキャンバス (256 の模様を並べる) を返す。 */
 function vrPhotoLeaf(S) {
   const N = 256, cv = document.createElement('canvas'); cv.width = cv.height = N;
@@ -2001,25 +2006,78 @@ function vrPhotoLoad() {
     im.onerror = () => rej(new Error(name + ': load failed'));
     im.src = vrPhoto.base + VR_PHOTO_FILES[name];
   });
-  const atlas = (im) => { const t = new THREE.Texture(im); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = Math.min(2, vrPhoto.uAniso); t.premultiplyAlpha = false; t.needsUpdate = true; return t; };   // 色は透明な所へ広げてある (縁が暗くならない)。アルファ付き WebP をそのまま 2D の画像として (キャンバスを通さない = 色が失われない)
+  /* アルファ付きの WebP (木の写真板・草): fetch → createImageBitmap (上下反転・アルファを掛けない・色空間の変換なし) = 展開も反転も裏のスレッド。
+     <img> のまま texImage2D に「アルファを掛けない + 上下反転」で渡すと、Chrome は転送の時に主スレッドで画像を展開し直す (大きな画像で数十 ms 止まる)。 */
+  const loadA = (name) => {
+    if (typeof createImageBitmap !== 'function' || typeof fetch !== 'function') return load(name);
+    vrPhoto.requests++;
+    return fetch(vrPhoto.base + VR_PHOTO_FILES[name]).then((r) => { if (!r.ok) throw new Error(name + ': load failed (' + r.status + ')'); return r.blob(); })
+      .then((b) => createImageBitmap(b, { imageOrientation: 'flipY', premultiplyAlpha: 'none', colorSpaceConversion: 'none' })
+        .then((bm) => { if (!(bm.width > 0)) throw new Error(name + ': empty'); vrPhoto.img[name] = bm; }, () => load(name)));   // (この形の ImageBitmap を作れないブラウザ: 従来の <img> で読む。取得の失敗はここに来ない)
+  };
+  const atlas = (im) => { const t = new THREE.Texture(im); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = Math.min(2, vrPhoto.uAniso); t.premultiplyAlpha = false; t.flipY = !(typeof ImageBitmap !== 'undefined' && im instanceof ImageBitmap); t.needsUpdate = true; return t; };   // 色は透明な所へ広げてある (縁が暗くならない)。ImageBitmap は作る時に反転済み (flipY は効かない)
   const prep = {
-    sky: () => { const t = new THREE.Texture(vrPhoto.img.sky); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.ClampToEdgeWrapping; t.anisotropy = 1; t.needsUpdate = true; return t; },
-    ground: () => vrPhotoArray(['grass', 'meadow', 'sand', 'rock'].map((n) => vrPhoto.img[n]), 1024, vrPhoto.uAniso),   // 層 0 草 / 1 牧草 / 2 砂 / 3 岩
+    sky: () => { const t = new THREE.Texture(vrPhoto.img.sky); t.colorSpace = THREE.SRGBColorSpace; t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.ClampToEdgeWrapping; t.anisotropy = 1; t.generateMipmaps = false; t.minFilter = THREE.LinearFilter; t.needsUpdate = true; return t; },   // 縮小の段なし: 4096 px / 360° = 11.4 px/° (Quest は約 20 px/° = 常に拡大、PC の 960 px / 90° でほぼ等倍)。GPU 約 6 MB 減・転送時の段の生成なし
+    ground: () => Promise.all([vrPhotoArray(['grass', 'meadow', 'sand', 'rock'].map((n) => vrPhoto.img[n]), 1024, vrPhoto.uAniso), vrGroundNoise()]).then(([a, w]) => { vrPhoto.tex.gw = w; return a; }),   // 層 0 草 / 1 牧草 / 2 砂 / 3 岩 + 世界の画像 (むら・影)
     trees: () => vrPhotoArray([vrPhoto.img.bark, vrPhotoLeaf(512)], 512, Math.min(2, vrPhoto.uAniso)),                 // 層 0 樹皮 / 1 葉 (予備)
     imp: () => ({ c: atlas(vrPhoto.img.treeC), b: atlas(vrPhoto.img.treeB) }),
     cards: () => atlas(vrPhoto.img.cards),
   };
   const run = (g) => {
-    Promise.all(VR_PHOTO_GROUPS[g].map(load)).then(() => prep[g]()).then((t) => {
+    Promise.all(VR_PHOTO_GROUPS[g].map(g === 'imp' || g === 'cards' ? loadA : load)).then(() => prep[g]()).then((t) => {
       vrPhoto.tex[g] = t; for (const n of VR_PHOTO_GROUPS[g]) delete vrPhoto.img[n];   // 画素は配列へ写した (空・木・草はテクスチャが画像を持つ)
-      vrPhoto.queue.push({ g, t });
-      if (!renderer.xr.isPresenting) vrPhotoPump(true);       // セッションの外: すぐ GPU へ (XR の最中は自然の世界の中で 1 フレームに 1 つ)
-    }).catch((e) => {
-      vrPhoto.err.push(g + ': ' + (e && e.message || e)); vrPhoto.failed[g] = true;
-      if (g === 'imp' && vrPhoto.state === 1) { vrPhoto.state = 2; run('trees'); }   // 木の写真板が取れない → 従来の低ポリの木に樹皮・葉の写真を貼る予備へ
-    });
+      const parts = g === 'imp' ? [t.c, t.b] : g === 'ground' ? [t, vrPhoto.tex.gw] : [t];   // 1 枚ずつ GPU へ (大きな画像 2 枚を同じフレームで送らない)
+      parts.forEach((x, i) => vrPhoto.queue.push({ g, t: x, last: i === parts.length - 1 }));
+      if (!renderer.xr.isPresenting && !(vrw.group && vrw.group.visible)) vrPhotoPump(true);   // 自然の世界の外 (開始画面など): すぐ GPU へ。自然の世界の中 (XR でも PC でも) は natFrame から 1 フレームに 1 枚
+    }).catch((e) => vrPhotoFail(g, e));
   };
+  vrPhoto.run = run;
   for (const g of ['sky', 'ground', 'imp', 'cards']) run(g);
+}
+/** グループ g が使えない (取得・展開・GPU への転送の失敗): 記録して、そのグループは従来の見た目のまま。木の写真板なら、従来の低ポリの木に樹皮・葉の写真を貼る予備へ (1 回だけ)。 */
+function vrPhotoFail(g, e) {
+  vrPhoto.err.push(g + ': ' + (e && e.message || e)); vrPhoto.failed[g] = true;
+  const q = vrPhoto.queue; for (let i = q.length - 1; i >= 0; i--) if (q[i].g === g) q.splice(i, 1);   // (同じグループの残りの画像は送らない)
+  if (g === 'imp' && vrPhoto.state === 1 && vrPhoto.run) { vrPhoto.state = 2; vrPhoto.run('trees'); }
+}
+/** 地面の写真の材質が読む世界全体の画像 (VR_GW_N²、RGBA)。緑 = 値ノイズ (格子 1/0.11 m)、青 = 値ノイズ (格子 1/0.43 m)。赤 (木の根元の影) は 255 で、世界ができてから vrStampShadows が焼く。
+ *  (v1.4 の最初は画素ごとにハッシュの値ノイズを 4 回 = 地形の画素の処理が重かった。同じむらを 1 回の取得に置き換えた。低い周波数 2 つ = 明暗・色合いは頂点の倍率 aTA / aTB に含めた)
+ *  格子の値を先に作り、行ごとに補間するだけ。128 行ずつ別のタスクに分ける (主スレッドを長く止めない)。 */
+function vrHash2(x, y) { const fr = (v) => v - Math.floor(v); let a = fr(x * 0.1031), b = fr(y * 0.1031), c = a; const d = a * (b + 33.33) + b * (c + 33.33) + c * (a + 33.33); a += d; b += d; c += d; return fr((a + b) * c); }   // (GLSL の vh と同じ式)
+function vrVn(x, y) { const ix = Math.floor(x), iy = Math.floor(y); let fx = x - ix, fy = y - iy; fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy); const a = vrHash2(ix, iy), b = vrHash2(ix + 1, iy), c = vrHash2(ix, iy + 1), d = vrHash2(ix + 1, iy + 1); return a + (b - a) * fx + (c + (d - c) * fx - a - (b - a) * fx) * fy; }
+function vrGroundNoise() {
+  return new Promise((res, rej) => {
+    const N = VR_GW_N, S = C.VR_SIZE, half = S / 2, data = new Uint8Array(N * N * 4);
+    const oct = [[0.11, 0], [0.43, 7]].map(([F, o]) => {
+      const ii = new Int32Array(N), w = new Float32Array(N);
+      for (let k = 0; k < N; k++) { const p = ((k + 0.5) * S / N - half) * F + o, fl = Math.floor(p), f = p - fl; ii[k] = fl; w[k] = f * f * (3 - 2 * f); }
+      const i0 = ii[0], n = ii[N - 1] - i0 + 2, h = new Float32Array(n * n);
+      for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) h[y * n + x] = vrHash2(i0 + x, i0 + y);
+      for (let k = 0; k < N; k++) ii[k] -= i0;
+      return { ii, w, n, h };
+    });
+    let row = 0;
+    const step = () => {
+      try {
+        const r1 = Math.min(N, row + 128);
+        for (; row < r1; row++) {
+          for (let c = 0; c < 2; c++) {
+            const O = oct[c], z = O.ii[row], wz = O.w[row], h = O.h, n = O.n;
+            for (let x = 0; x < N; x++) {
+              const ix = O.ii[x], wx = O.w[x], b0 = z * n + ix, b1 = b0 + n, v0 = h[b0] + (h[b0 + 1] - h[b0]) * wx, v1 = h[b1] + (h[b1 + 1] - h[b1]) * wx;
+              data[(row * N + x) * 4 + 1 + c] = Math.round((v0 + (v1 - v0) * wz) * 255);
+            }
+          }
+          for (let x = 0; x < N; x++) { data[(row * N + x) * 4] = 255; data[(row * N + x) * 4 + 3] = 255; }
+        }
+        if (row < N) { setTimeout(step, 0); return; }
+        const t = new THREE.DataTexture(data, N, N, THREE.RGBAFormat, THREE.UnsignedByteType);
+        t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping; t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearMipmapLinearFilter; t.generateMipmaps = true; t.anisotropy = 1; t.needsUpdate = true;   // (低い周波数だけの画像: 異方性フィルタは要らない)
+        res(t);
+      } catch (e) { rej(e); }
+    };
+    setTimeout(step, 0);
+  });
 }
 /** GPU へ転送して、そのグループを使えるようにする。all = 全部 (セッションの外) / それ以外は 1 グループだけ (natFrame から毎フレーム)。 */
 function vrPhotoPump(all) {
@@ -2027,9 +2085,10 @@ function vrPhotoPump(all) {
   while (q.length) {
     const it = q.shift();
     try {
-      for (const t of (it.g === 'imp' ? [it.t.c, it.t.b] : [it.t])) renderer.initTexture(t);
-      vrPhoto.ok[it.g] = true; if (vrPhoto.ok.sky && vrPhoto.ok.ground && vrPhoto.ok.imp && vrPhoto.ok.cards) vrPhoto.ms = performance.now() - vrPhoto.t0; vrPhotoUpgrade(it.g);
-    } catch (e) { vrPhoto.err.push(it.g + ': ' + e); vrPhoto.failed[it.g] = true; }
+      if (it.t === vrPhoto.tex.gw) { if (vrw.built && !it.t.userData.stamped) vrStampShadows(it.t); if (it.t.userData.stamped) renderer.initTexture(it.t); }   // (世界がまだ無い = 影を焼けない時は、vrPhotoUpgrade で焼いて最初の描画で送る)
+      else renderer.initTexture(it.t);
+      if (it.last) { vrPhoto.ok[it.g] = true; if (vrPhoto.ok.sky && vrPhoto.ok.ground && vrPhoto.ok.imp && vrPhoto.ok.cards) vrPhoto.ms = performance.now() - vrPhoto.t0; vrPhotoUpgrade(it.g); }
+    } catch (e) { vrPhotoFail(it.g, e); }
     if (!all) break;
   }
 }
@@ -2043,9 +2102,9 @@ function vrPhotoUpgrade(g) {
   if (g === 'imp' && nat.sway.on) return;                      // (?sway=1 の揺れの確認用は従来の木のまま)
   vrw.ph[g] = 1;
   const sw = [];                                               // [メッシュ, 新しい材質, 新しい形状 (空だけ)]
-  let add = null;                                              // 新しく足すメッシュ (木の写真板・影・草)
-  if (g === 'sky') sw.push([vrw.sky, vrSkyPhotoMat(), new THREE.SphereGeometry(1, 64, 48)]);
-  else if (g === 'ground') sw.push([vrw.terrain, vrTerrainPhotoMat(), null], [vrw.rocks, vrRockPhotoMat(), null]);
+  let add = null;                                              // 新しく足すメッシュ (木の写真板・草)
+  if (g === 'sky') { sw.push([vrw.sky, vrSkyPhotoMat(), vrSkyPhotoGeo()]); const cap = vrSkyCapMesh(); vrw.sky.add(cap); vrw.skyCap = cap; add = [cap]; }
+  else if (g === 'ground') { if (!vrPhoto.tex.gw.userData.stamped) vrStampShadows(vrPhoto.tex.gw); sw.push([vrw.terrain, vrTerrainPhotoMat(), null], [vrw.rocks, vrRockPhotoMat(), null]); }
   else if (g === 'imp') add = vrBuildImpostors();
   else if (g === 'cards') add = vrBuildGrass();
   else { const m = vrTreePhotoMat(); sw.push([vrw.conifers, m, null], [vrw.broad, m, null]); }
@@ -2053,7 +2112,7 @@ function vrPhotoUpgrade(g) {
     const old = new Set();
     for (const [mesh, mat, geo] of sw) { old.add(mesh.material); mesh.material = mat; if (geo) { mesh.geometry.dispose(); mesh.geometry = geo; } }
     for (const m of old) m.dispose();
-    if (add) { for (const m of add) { m.visible = true; } if (g === 'imp') { vrw.conifers.visible = false; vrw.broad.visible = false; } }
+    if (add) { for (const m of add) { m.visible = true; } if (g === 'imp') { vrw.conifers.visible = false; vrw.broad.visible = false; vrPhoto.uShadow.value = 1; } }
     vrw.ph[g] = 2; vrPhoto.u[g === 'sky' ? 'uSkyOn' : g === 'ground' ? 'uGround' : 'uTrees'].value = 1;
     vrPhotoApply(); hud.natSig = -1;                           // (HUD の診断の行を描き直す)
   };
@@ -2063,7 +2122,7 @@ function vrPhotoUpgrade(g) {
     try {
       const tmp = new THREE.Scene();
       for (const [mesh, mat, geo] of sw) { const p = mesh.clone(); p.material = mat; if (geo) p.geometry = geo; tmp.add(p); }
-      if (add) for (const m of add) { const p = m.clone(); p.visible = true; tmp.add(p); }
+      if (add) vrBillCompileScene(add, tmp);                   // (写真板・草は 2 つの変種とも)
       renderer.compileAsync(tmp, camera, scene).then(f, f);
     } catch (e) { f(); }
   } else { done(); vrw.compiled = false; }                    // 見えていない: 次に自然へ入る時の暗転中にまとめてコンパイル (vrSceneLook)
@@ -2079,91 +2138,213 @@ function vrPhotoApply() {
   if (vrw.ph.ground === 2 && vrw.water) { vrw.water.material.color.setHex(0x356f86); vrw.water.material.specular.setHex(0x7f9bad); }
 }
 /** 木の写真板 (v1.4): 針葉樹・広葉樹それぞれ 2 種の木を、8 方向から焼いた写真 (4×4 の 1 枚の画像: 種ごとに 2 行 × 4 列) にして InstancedMesh 1 本ずつで描く (計 2 ドローコール)。
- *  ・板は常に水平方向だけカメラへ向く (円筒ビルボード = 立ったまま)。カメラの方位に近い 2 つの方向を混ぜる (つなぎ目の「ぱっと切り替わる」のを抑える)。見下ろす時は板を少し後ろへ倒す。
+ *  ・板は常に水平方向だけ「頭」へ向く (円筒ビルボード = 立ったまま)。頭の方位に近い 2 つの方向を、境目の前後 (1 コマの 40%) だけ混ぜる (それ以外は 1 回の取得)。見下ろす時は板を少し後ろへ倒す。
+ *  ・頭の位置 (uHead) は両目で共通 (XR では左右の目の中点): 目ごとに板の向き・コマが変わると左右で絵がずれる (立体視の不一致) ので、カメラ (= 目) の位置は使わない。
+ *  ・板は四角ではなく、コマごとに焼いた輪郭を囲む 16 角形 (中心からの 16 方向の半径。VR_IMP_R)。混ぜる 2 コマは方向ごとに大きい方の半径 (両方を囲む)。透明な所を描かない (塗りの量が約 4〜7 割)。
  *  ・光は写真の太陽に合わせて焼き込み済み (木を回さない = 光る側が変わらない)。木ごとの揺らぎ = 大きさ・幅・色合い・向きの小さなずれ (±約 50°) と 2 種の選び分け。
- *  ・縁は alphaToCoverage (renderer は antialias あり = XR でもマルチサンプル)。アルファの境目は fwidth で締める。
+ *  ・縁: 描き先がマルチサンプル (XR の層 / キャンバスの antialias) なら alphaToCoverage (fwidth で締める)。そうでなければ 0.45 で切る (uHard = 1。下の vrBillboardBefore が描画ごとに決める)。
+ *  ・画像は 1 コマ 384 px の高さ (下と左右に透明な余白。縮小の段で隣のコマがにじみにくい)。2 枚で約 28 MB (縮小の段を含む)。
  *  ・位置・大きさは従来の低ポリの木と同じ配列 (vrw.tx / ty / tz / th / tr)。当たり判定と配置は変わらない。 */
-const VR_IMP_SPEC = Object.freeze([{ asp: 460 / 512, hk: 1.006, sx: 0.84 }, { asp: 684 / 512, hk: 1.005, sx: 0.8 }]);   // 画像 1 コマの縦横比 (幅/高さ) / 木の高さ→コマの高さ / 幅を詰める割合 (従来の当たり判定の太さに近づける)
-const VR_IMP_VERT = 'attribute vec3 aI;\nvarying vec2 vUa;\nvarying vec2 vUb;\nvarying float vMix;\nvarying vec3 vTint;\nvarying float vLy;\n#include <fog_pars_vertex>\nvoid main() {\n'
-  + '  vec3 base = instanceMatrix[ 3 ].xyz;\n  float Wq = instanceMatrix[ 0 ].x, Hq = instanceMatrix[ 1 ].y;\n'
-  + '  vec3 toC = cameraPosition - base;\n  float L = length( toC.xz );\n  vec2 d = L > 1e-3 ? toC.xz / L : vec2( 1.0, 0.0 );\n'
-  + '  float f = ( atan( d.y, d.x ) - aI.x ) * 1.2732395;\n  f -= 8.0 * floor( f / 8.0 );\n  float i0 = floor( f );\n  vMix = f - i0;\n  float i1 = mod( i0 + 1.0, 8.0 );\n'
-  + '  float T = clamp( atan( toC.y - Hq * 0.4, max( L, 1.0 ) ), -0.2, 0.9 ) * 0.5;\n'
-  + '  vec3 right = vec3( d.y, 0.0, - d.x );\n  vec3 up = vec3( 0.0, cos( T ), 0.0 ) - vec3( d.x, 0.0, d.y ) * sin( T );\n'
-  + '  vec3 wp = base + right * ( position.x * Wq ) + up * ( position.y * Hq );\n'
-  + '  vec2 ca = vec2( mod( i0, 4.0 ), 2.0 * aI.y + floor( i0 * 0.25 ) ), cb = vec2( mod( i1, 4.0 ), 2.0 * aI.y + floor( i1 * 0.25 ) );\n'
-  + '  vUa = vec2( ca.x + position.x + 0.5, 4.0 - ca.y - 1.0 + position.y ) * 0.25;\n  vUb = vec2( cb.x + position.x + 0.5, 4.0 - cb.y - 1.0 + position.y ) * 0.25;\n'
-  + '  vTint = instanceColor;\n  vLy = position.y;\n'
-  + '  vec4 mvPosition = viewMatrix * vec4( wp, 1.0 );\n  gl_Position = projectionMatrix * mvPosition;\n#include <fog_vertex>\n}';
-const VR_IMP_FRAG = 'uniform sampler2D uMap;\nvarying vec2 vUa;\nvarying vec2 vUb;\nvarying float vMix;\nvarying vec3 vTint;\nvarying float vLy;\n#include <common>\n#include <fog_pars_fragment>\nvoid main() {\n'
-  + '  vec4 t = mix( texture2D( uMap, vUa, -0.5 ), texture2D( uMap, vUb, -0.5 ), vMix );\n'
-  + '  float a = clamp( ( t.a - 0.45 ) / max( fwidth( t.a ), 0.03 ) + 0.5, 0.0, 1.0 );\n  if ( a < 0.01 ) discard;\n'
-  + '  gl_FragColor = vec4( t.rgb * vTint * ( 1.3 * mix( 0.78, 1.0, smoothstep( 0.0, 0.3, vLy ) ) ), a );\n'
-  + '  #include <colorspace_fragment>\n  #include <fog_fragment>\n}';
-function vrImpMat(tex) {
-  const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog]); uniforms.uMap = { value: tex };   // (merge は texture を複製してしまうので、後から同じ texture を入れる = GPU に 2 枚置かない)
-  return new THREE.ShaderMaterial({ uniforms, vertexShader: VR_IMP_VERT, fragmentShader: VR_IMP_FRAG, fog: true, alphaToCoverage: true, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.ZeroFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, blendEquationAlpha: THREE.AddEquation, side: THREE.DoubleSide });
+const VR_IMP_SPEC = Object.freeze([{ asp: 352 / 384, hk: 1.02746, sx: 0.84, yb: 8 / 384 }, { asp: 512 / 384, hk: 1.02644, sx: 0.8, yb: 8 / 384 }]);   // 1 コマの縦横比 (幅/高さ) / 木の高さ→コマの高さ / 幅を詰める割合 (従来の当たり判定の太さに近づける) / 木の根元のコマ内の高さ
+const VR_IMP_C = Object.freeze([0, 0.45]);                    // 16 角形の中心 (コマ内: x -0.5..0.5 / y 0..1)
+// 16 角形の方向 (中心から。コマの 4 隅の方向を含む) と、(種 0/1) × (コマ 0..7) × (方向 0..15) の半径 (コマの高さ = 1 の単位。v14a/atlas2.py が焼いた輪郭から計算)
+const VR_IMP_DIR = Object.freeze([-0.94230,-0.33477,-0.74329,-0.66896,-0.40684,-0.91350,0.00000,-1.00000,0.40684,-0.91350,0.74329,-0.66897,0.94230,-0.33477,0.99875,0.05006,0.90410,0.42733,0.67267,0.73994,0.36060,0.93272,0.00000,1.00000,-0.36060,0.93272,-0.67267,0.73994,-0.90410,0.42733,-0.99875,0.05006]);
+const VR_IMP_R = Object.freeze([new Float32Array([0.495,0.518,0.497,0.454,0.497,0.555,0.535,0.458,0.403,0.454,0.566,0.554,0.492,0.342,0.266,0.342,0.452,0.572,0.497,0.453,0.497,0.552,0.508,0.408,0.469,0.485,0.59,0.554,0.323,0.318,0.223,0.296,0.504,0.504,0.471,0.448,0.497,0.567,0.535,0.48,0.39,0.461,0.563,0.554,0.436,0.326,0.261,0.39,0.523,0.523,0.497,0.454,0.497,0.515,0.498,0.389,0.286,0.347,0.564,0.554,0.547,0.432,0.341,0.438,0.535,0.555,0.497,0.454,0.497,0.518,0.495,0.342,0.266,0.342,0.489,0.554,0.566,0.454,0.403,0.458,0.508,0.552,0.497,0.453,0.497,0.572,0.452,0.296,0.223,0.318,0.323,0.554,0.59,0.485,0.469,0.408,0.535,0.567,0.497,0.448,0.471,0.504,0.504,0.39,0.261,0.326,0.436,0.554,0.563,0.461,0.39,0.48,0.498,0.515,0.497,0.454,0.497,0.523,0.523,0.438,0.341,0.432,0.544,0.554,0.564,0.357,0.286,0.389,0.451,0.424,0.469,0.454,0.434,0.358,0.286,0.32,0.34,0.385,0.564,0.554,0.542,0.374,0.337,0.437,0.344,0.39,0.465,0.454,0.434,0.362,0.377,0.365,0.328,0.392,0.568,0.554,0.539,0.412,0.312,0.342,0.329,0.431,0.469,0.454,0.45,0.384,0.397,0.379,0.366,0.452,0.565,0.554,0.539,0.395,0.296,0.329,0.289,0.386,0.456,0.454,0.454,0.387,0.387,0.324,0.299,0.344,0.56,0.554,0.559,0.354,0.354,0.339,0.288,0.36,0.434,0.454,0.468,0.422,0.448,0.434,0.333,0.373,0.541,0.554,0.564,0.387,0.343,0.323,0.38,0.365,0.434,0.454,0.464,0.388,0.34,0.339,0.31,0.41,0.539,0.554,0.568,0.393,0.33,0.368,0.399,0.387,0.451,0.454,0.454,0.416,0.327,0.327,0.293,0.394,0.539,0.554,0.565,0.455,0.369,0.382,0.389,0.389,0.455,0.454,0.456,0.384,0.286,0.336,0.351,0.351,0.559,0.554,0.56,0.345,0.304,0.326]), new Float32Array([0.096,0.125,0.448,0.454,0.448,0.218,0.218,0.231,0.259,0.419,0.565,0.554,0.594,0.683,0.557,0.484,0.063,0.073,0.448,0.454,0.448,0.216,0.217,0.291,0.437,0.489,0.568,0.554,0.594,0.588,0.501,0.348,0.035,0.034,0.448,0.454,0.448,0.138,0.122,0.276,0.343,0.505,0.567,0.554,0.594,0.402,0.254,0.164,0.14,0.143,0.448,0.454,0.448,0.138,0.092,0.336,0.499,0.603,0.594,0.554,0.587,0.398,0.202,0.14,0.218,0.218,0.448,0.454,0.448,0.125,0.096,0.484,0.557,0.683,0.594,0.554,0.565,0.419,0.259,0.231,0.217,0.216,0.448,0.454,0.448,0.073,0.063,0.348,0.501,0.588,0.594,0.554,0.568,0.489,0.437,0.291,0.122,0.138,0.448,0.454,0.448,0.034,0.035,0.164,0.254,0.402,0.594,0.554,0.567,0.505,0.343,0.276,0.092,0.138,0.448,0.454,0.448,0.143,0.14,0.14,0.202,0.398,0.587,0.554,0.594,0.603,0.499,0.336,0.343,0.316,0.447,0.454,0.453,0.353,0.353,0.358,0.467,0.522,0.522,0.554,0.568,0.528,0.501,0.36,0.272,0.377,0.446,0.454,0.449,0.376,0.434,0.479,0.498,0.498,0.568,0.554,0.556,0.556,0.509,0.32,0.374,0.395,0.448,0.454,0.448,0.384,0.41,0.462,0.499,0.518,0.59,0.554,0.554,0.679,0.557,0.47,0.322,0.352,0.453,0.454,0.447,0.344,0.492,0.505,0.497,0.536,0.592,0.554,0.529,0.529,0.492,0.355,0.355,0.355,0.453,0.454,0.447,0.314,0.341,0.358,0.499,0.527,0.568,0.554,0.523,0.523,0.469,0.367,0.436,0.378,0.449,0.454,0.446,0.376,0.258,0.318,0.506,0.555,0.555,0.554,0.568,0.499,0.499,0.482,0.412,0.386,0.448,0.454,0.448,0.394,0.372,0.468,0.557,0.677,0.552,0.554,0.59,0.519,0.501,0.464,0.499,0.344,0.447,0.454,0.453,0.352,0.32,0.353,0.491,0.528,0.528,0.554,0.593,0.537,0.499,0.505])]);
+const VR_IMP_VERT = [
+  'attribute vec3 aV;', 'attribute vec4 aI;', 'attribute vec3 aT;', 'uniform vec3 uHead;', 'uniform vec4 uR[ 64 ];',
+  'varying vec2 vUa;', 'varying vec2 vUb;', 'flat varying float vMix;', 'varying vec3 vTint;', 'varying float vLy;',
+  '#include <fog_pars_vertex>',
+  'float rad( int k ) { return uR[ k >> 2 ][ k & 3 ]; }',
+  'void main() {',
+  '  vec3 base = position;', '  float Wq = aI.z, Hq = aI.w;',
+  '  vec3 toC = uHead - base;', '  float L = length( toC.xz );', '  vec2 d = L > 1e-3 ? toC.xz / L : vec2( 1.0, 0.0 );',
+  '  float f = ( atan( d.y, d.x ) - aI.x ) * 1.2732395;', '  f -= 8.0 * floor( f / 8.0 );', '  float i0 = floor( f );', '  float i1 = mod( i0 + 1.0, 8.0 );',
+  '  float m = clamp( ( f - i0 - 0.5 ) * 2.5 + 0.5, 0.0, 1.0 );', '  vMix = m;',
+  '  vec2 p = vec2( ' + VR_IMP_C[0].toFixed(3) + ', ' + VR_IMP_C[1].toFixed(3) + ' );',
+  '  if ( aV.z > 0.5 ) {',
+  '    int j = int( aV.z + 0.5 ) - 1, s = int( aI.y + 0.5 ) * 128;',
+  '    float ra = rad( s + int( i0 ) * 16 + j ), rb = rad( s + int( i1 ) * 16 + j );',
+  '    p = clamp( p + aV.xy * ( m <= 0.0 ? ra : m >= 1.0 ? rb : max( ra, rb ) ), vec2( -0.5, 0.0 ), vec2( 0.5, 1.0 ) );',
+  '  }',
+  '  float yy = toC.y - Hq * 0.4, LL = max( L, 1.0 ), th = clamp( yy / ( sqrt( yy * yy + LL * LL ) + LL ), -0.10033, 0.48306 );',   // 見上げ・見下ろしの角の半分 (以前の clamp( atan, -0.2, 0.9 ) × 0.5) の tan。三角関数なし
+  '  vec3 right = vec3( d.y, 0.0, - d.x );', '  vec3 up = vec3( - d.x * th, 1.0, - d.y * th ) * inversesqrt( 1.0 + th * th );',
+  '  vLy = p.y - YB;',
+  '  vec3 wp = base + right * ( p.x * Wq ) + up * ( vLy * Hq );',
+  '  vec2 ca = vec2( mod( i0, 4.0 ), 2.0 * aI.y + floor( i0 * 0.25 ) ), cb = vec2( mod( i1, 4.0 ), 2.0 * aI.y + floor( i1 * 0.25 ) );',
+  '  vUa = vec2( ca.x + p.x + 0.5, 3.0 - ca.y + p.y ) * 0.25;', '  vUb = vec2( cb.x + p.x + 0.5, 3.0 - cb.y + p.y ) * 0.25;',
+  '  vTint = aT;',
+  '  vec4 mvPosition = viewMatrix * vec4( wp, 1.0 );', '  gl_Position = projectionMatrix * mvPosition;',
+  '#include <fog_vertex>', '}'].join('\n');
+const VR_IMP_FRAG = [
+  'uniform sampler2D uMap;', 'uniform float uHard;',
+  'varying vec2 vUa;', 'varying vec2 vUb;', 'flat varying float vMix;', 'varying vec3 vTint;', 'varying float vLy;',
+  '#include <common>', '#include <fog_pars_fragment>',
+  'void main() {',
+  '  vec4 t;',                                                                // vMix は flat (三角形の中で一定) = 2×2 画素の組が分岐で割れない → 分岐の中でも微分 (縮小の段) は正しい
+  '  if ( vMix <= 0.0 ) t = texture2D( uMap, vUa, -0.5 );',
+  '  else if ( vMix >= 1.0 ) t = texture2D( uMap, vUb, -0.5 );',
+  '  else t = mix( texture2D( uMap, vUa, -0.5 ), texture2D( uMap, vUb, -0.5 ), vMix );',
+  '#ifdef ALPHA_TO_COVERAGE',                                                 // (alphaToCoverage の変種だけ: 縁を fwidth で締めた被覆。描き先がマルチサンプルでない時は uHard = 1 で切る)
+  '  float a = uHard > 0.5 ? step( 0.45, t.a ) : clamp( ( t.a - 0.45 ) / max( fwidth( t.a ), 0.03 ) + 0.5, 0.0, 1.0 );',
+  '#else',
+  '  float a = step( 0.45, t.a );',
+  '#endif',
+  '  if ( a < 0.01 ) discard;',
+  '  gl_FragColor = vec4( t.rgb * vTint * ( 1.3 * mix( 0.78, 1.0, smoothstep( 0.0, 0.3, vLy ) ) ), a );',
+  '  #include <colorspace_fragment>', '  #include <fog_fragment>', '}'].join('\n');
+/** 両目で共通の「頭」の位置と、縁の切り方 (マルチサンプルの有無) を、描く直前に決める (写真板・草の onBeforeRender。確保なし)。
+ *  XR の目 (左右のカメラ) で描く時 = 2 つの目の中点。それ以外 (PC の画面・モニター等) = そのカメラの位置。 */
+const vrBill = { head: { value: new THREE.Vector3() }, hard: { value: 0 }, aa: null, v: new THREE.Vector3() };
+function vrBillboardBefore(r, s, cam, geo, mat) {
+  const xr = r.xr, h = vrBill.head.value; let eye = false;
+  if (xr.isPresenting) { const xc = xr.getCamera(), cs = xc.cameras; if (cs.length >= 2 && (cam === cs[0] || cam === cs[1] || cam === xc)) { h.setFromMatrixPosition(cs[0].matrixWorld).add(vrBill.v.setFromMatrixPosition(cs[1].matrixWorld)).multiplyScalar(0.5); eye = true; } }
+  if (!eye) h.setFromMatrixPosition(cam.matrixWorld);
+  const rt = r.getRenderTarget(); let aa;
+  if (rt === null) { if (vrBill.aa === null) { try { vrBill.aa = !!r.getContext().getContextAttributes().antialias; } catch (e) { vrBill.aa = false; } } aa = vrBill.aa; }
+  else if (rt.isXRRenderTarget) { const bl = xr.getBaseLayer(); aa = bl && typeof bl.antialias === 'boolean' ? bl.antialias : rt.samples > 0; }   // XRWebGLLayer: その antialias / 投影レイヤー: three のマルチサンプルの描き先
+  else aa = rt.samples > 0;
+  vrBill.hard.value = mat.alphaToCoverage && aa ? 0 : 1;      // 0 = 縁を alphaToCoverage で滑らかに / 1 = 0.45 で切る
+  mat.uniformsNeedUpdate = true;                               // (同じ材質を別のカメラで続けて描いても値を送り直す)
 }
-/** 木の根元の影 (柔らかい暗い楕円。1 ドローコール)。地面の傾きに沿って置き、太陽と反対側へ少し伸ばす。 */
-const VR_BLOB_VERT = 'varying vec2 vP;\n#include <fog_pars_vertex>\nvoid main() {\n  vP = position.xz;\n  vec4 mvPosition = viewMatrix * ( instanceMatrix * vec4( position, 1.0 ) );\n  gl_Position = projectionMatrix * mvPosition;\n#include <fog_vertex>\n}';
-const VR_BLOB_FRAG = 'varying vec2 vP;\n#include <fog_pars_fragment>\nvoid main() {\n  float r = length( vP );\n  float a = 0.5 * smoothstep( 1.0, 0.1, r );\n  gl_FragColor = vec4( 0.03, 0.05, 0.01, a * exp( - fogDensity * fogDensity * vFogDepth * vFogDepth ) );\n  #include <colorspace_fragment>\n}';
+/** 写真板・草の材質は 2 つずつ (userData.mats = [0.45 で切る, alphaToCoverage])。XR の描き先がマルチサンプルの時だけ alphaToCoverage の方 (natFrame から毎フレーム。確保なし)。
+ *  (PC の画面 = 切る方。alphaToCoverage の有無はシェーダーの変種なので、材質の差し替えで切り替える = 毎回コンパイルしない。両方とも先にコンパイルしておく: vrBillCompile) */
+function vrBillA2C() {
+  if (!renderer.xr.isPresenting) return false;
+  const bl = renderer.xr.getBaseLayer();
+  if (bl && typeof bl.antialias === 'boolean') return bl.antialias;   // XRWebGLLayer
+  if (vrBill.aa === null) { try { vrBill.aa = !!renderer.getContext().getContextAttributes().antialias; } catch (e) { vrBill.aa = false; } }
+  return vrBill.aa;                                            // 投影レイヤー: three は antialias の時 4 サンプルの描き先を使う
+}
+function vrBillSelect() {
+  const k = vrBillA2C() ? 1 : 0, im = vrw.imp;
+  if (im) for (let i = 0; i < im.length; i++) { const t = im[i].userData.mats[k]; if (im[i].material !== t) im[i].material = t; }
+  if (vrw.grass) { const t = vrw.grass.userData.mats[k]; if (vrw.grass.material !== t) vrw.grass.material = t; }
+}
+/** 使っていない方の変種も先にコンパイルする (自然へ入る暗転中 / 写真の差し替えの裏のコンパイル)。meshes の各メッシュの userData.mats を全部。 */
+function vrBillCompileScene(meshes, tmp) {
+  for (const m of meshes) {
+    if (!m) continue;
+    if (m.userData.mats) for (const mat of m.userData.mats) { const p = m.clone(); p.material = mat; p.visible = true; p.onBeforeRender = () => {}; tmp.add(p); }
+    else { const p = m.clone(); p.visible = true; tmp.add(p); }
+  }
+  return tmp;
+}
+/** 写真板・草の材質の組 [切る, alphaToCoverage] (uniforms は同じものを共有)。 */
+function vrBillMats(o) { return [false, true].map((a2c) => new THREE.ShaderMaterial(Object.assign({ fog: true, alphaToCoverage: a2c, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.ZeroFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, blendEquationAlpha: THREE.AddEquation, side: THREE.DoubleSide }, o))); }   // (アルファは書かない = 空が書いた 1 のまま: パススルーが透けない)
+function vrImpMat(tex, k) {
+  const uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog]); uniforms.uMap = { value: tex }; uniforms.uHead = vrBill.head; uniforms.uHard = vrBill.hard;   // (merge は texture を複製してしまうので、後から同じ texture を入れる = GPU に 2 枚置かない)
+  const R = VR_IMP_R[k], uR = []; for (let i = 0; i < 64; i++) uR.push(new THREE.Vector4(R[i * 4], R[i * 4 + 1], R[i * 4 + 2], R[i * 4 + 3]));
+  uniforms.uR = { value: uR };
+  return vrBillMats({ uniforms, vertexShader: VR_IMP_VERT.replace('YB', VR_IMP_SPEC[k].yb.toFixed(6)), fragmentShader: VR_IMP_FRAG });
+}
+/** 木 i の写真板の大きさ [コマの高さ Hq, 幅 Wq] (写真板と根元の影で共通。決まった乱数)。 */
+function vrImpSize(i) {
+  const c = VR_IMP_SPEC[vrw.tk[i]], Hq = vrw.th[i] * c.hk * (0.94 + 0.12 * vrHash(i, 8, 2));
+  return [Hq, Hq * c.asp * c.sx * (0.92 + 0.16 * vrHash(i, 9, 2))];
+}
+/** 木の根元の影 (v1.4): 地面の写真の材質が読む世界全体の 1024² の画像の赤 (= 明るさの倍率) に、太陽と反対側へ寄せた柔らかい楕円を焼く。
+ *  (以前は 1000 枚の半透明の板 = 1 ドローコール + 大きな重ね塗り。地面の 1 回の取得に含めた。木の写真板が使える時だけ効く: uShadow) */
+function vrStampShadows(tex) {
+  const v = vrw, N = VR_GW_N, d = tex.image.data, S = C.VR_SIZE, half = S / 2, px = N / S;
+  for (let i = 0; i < N * N; i++) d[i * 4] = 255;
+  const sx = -VR_SUN_PHOTO.x, sz = -VR_SUN_PHOTO.z, sl = Math.hypot(sx, sz) || 1, ux = sx / sl, uz = sz / sl;
+  for (let i = 0; i < v.nTree; i++) {
+    if (v.tk[i] === 2) continue;
+    const [Hq, Wq] = vrImpSize(i), off = Hq * 0.12, cx = v.tx[i] + ux * off, cz = v.tz[i] + uz * off, ra = Wq * 0.42, rb = Wq * 0.3;
+    const x0 = Math.max(0, Math.floor((cx - ra + half) * px)), x1 = Math.min(N - 1, Math.ceil((cx + ra + half) * px)), z0 = Math.max(0, Math.floor((cz - ra + half) * px)), z1 = Math.min(N - 1, Math.ceil((cz + ra + half) * px));
+    for (let zi = z0; zi <= z1; zi++) {
+      const wz = (zi + 0.5) / px - half - cz;
+      for (let xi = x0; xi <= x1; xi++) {
+        const wx = (xi + 0.5) / px - half - cx, a = (wx * ux + wz * uz) / ra, b = (wx * uz - wz * ux) / rb, r = Math.sqrt(a * a + b * b);
+        if (r >= 1) continue;
+        const t = clamp((1 - r) / 0.9, 0, 1), al = 0.5 * t * t * (3 - 2 * t), o = (zi * N + xi) * 4;   // 0.5 × smoothstep(1.0, 0.1, r) (以前の板と同じ濃さ)
+        d[o] = Math.round(d[o] * (1 - al));
+      }
+    }
+  }
+  tex.userData.stamped = true; tex.needsUpdate = true;
+}
+/** 写真板の形状 (種類 k の木すべてを 1 つの形状にまとめる。1 本 = 中心 1 + 縁 16 頂点の扇 = 16 三角形)。
+ *  (InstancedMesh にしない: 形・数とも同じだが、ソフトウェア描画 (検証の環境) では 1 インスタンスごとの手間が大きい。Quest ではどちらも 1 ドローコール)
+ *  position = 木の根元 / aV = (方向 x, 方向 y, 縁の番号 + 1。中心は 0) / aI = (向きのずれ, 種 0/1, 幅 Wq, コマの高さ Hq) / aT = 色合い。 */
 function vrBuildImpostors() {
   const v = vrw, tex = vrPhoto.tex.imp, n = v.nTree, nk = [0, 0, 0];
   for (let i = 0; i < n; i++) nk[v.tk[i]]++;
-  const mm = new THREE.Matrix4(), qq = new THREE.Quaternion(), pp = new THREE.Vector3(), ss = new THREE.Vector3(), col = new THREE.Color(), out = [], sv = [v.nx, v.ny, v.nz];
+  const NV = 17, col = new THREE.Color();
   const meshes = [0, 1].map((k) => {
-    const g = new THREE.PlaneGeometry(1, 1); g.translate(0, 0.5, 0); const ai = new Float32Array(Math.max(1, nk[k]) * 3); g.setAttribute('aI', new THREE.InstancedBufferAttribute(ai, 3));
-    const m = new THREE.InstancedMesh(g, vrImpMat(k === 0 ? tex.c : tex.b), Math.max(1, nk[k])); m.frustumCulled = false; m.instanceMatrix.setUsage(THREE.StaticDrawUsage); m.name = k === 0 ? 'vrImpConifer' : 'vrImpBroad'; m.visible = false; m.userData.ai = ai; return m;
+    const c = Math.max(1, nk[k]), P = new Float32Array(c * NV * 3), V = new Float32Array(c * NV * 3), I = new Float32Array(c * NV * 4), Tn = new Float32Array(c * NV * 3), idx = new Uint32Array(c * 48);
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(P, 3)); g.setAttribute('aV', new THREE.BufferAttribute(V, 3)); g.setAttribute('aI', new THREE.BufferAttribute(I, 4)); g.setAttribute('aT', new THREE.BufferAttribute(Tn, 3)); g.setIndex(new THREE.BufferAttribute(idx, 1));
+    const mats = vrImpMat(k === 0 ? tex.c : tex.b, k), m = new THREE.Mesh(g, mats[vrBillA2C() ? 1 : 0]); m.userData.mats = mats; m.frustumCulled = false; m.name = k === 0 ? 'vrImpConifer' : 'vrImpBroad'; m.visible = false;
+    m.onBeforeRender = vrBillboardBefore; m.renderOrder = VR_BILL_ORDER; m.userData.tree = new Int32Array(c); m.userData.count = 0; return m;
   });
-  const bg = new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2), bm = new THREE.InstancedMesh(bg, new THREE.ShaderMaterial({ uniforms: THREE.UniformsUtils.merge([THREE.UniformsLib.fog]), vertexShader: VR_BLOB_VERT, fragmentShader: VR_BLOB_FRAG, fog: true, transparent: true, depthWrite: false, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), Math.max(1, nk[0] + nk[1]));
-  bm.frustumCulled = false; bm.name = 'vrTreeShadows'; bm.visible = false; bm.renderOrder = 1;
-  const sx = -VR_SUN_PHOTO.x, sz = -VR_SUN_PHOTO.z, sl = Math.hypot(sx, sz) || 1, S0 = new THREE.Vector3(sx / sl, 0, sz / sl), X = new THREE.Vector3(), Z = new THREE.Vector3(), Nn = new THREE.Vector3();
-  const cnt = [0, 0]; let nb = 0;
   for (let i = 0; i < n; i++) {
     const k = v.tk[i]; if (k === 2) continue;
-    const sp = vrHash(i, 7, 2) < 0.5 ? 0 : 1, c = VR_IMP_SPEC[k], hs = 0.94 + 0.12 * vrHash(i, 8, 2), Hq = v.th[i] * c.hk * hs, Wq = Hq * c.asp * c.sx * (0.92 + 0.16 * vrHash(i, 9, 2)), j = cnt[k]++, m = meshes[k];
-    mm.compose(pp.set(v.tx[i], v.ty[i] - 0.15, v.tz[i]), qq.identity(), ss.set(Wq, Hq, 1)); m.setMatrixAt(j, mm);
-    const g = 0.9 + 0.2 * vrHash(i, 4, 2), h = vrHash(i, 5, 2);
-    if (k === 0) col.setRGB(g * (0.95 + 0.1 * h), g, g * (0.95 + 0.1 * (1 - h))); else col.setRGB(g * (0.9 + 0.2 * h), g, g * (0.86 + 0.18 * (1 - h)));
-    m.setColorAt(j, col);
-    m.userData.ai[j * 3] = (vrHash(i, 10, 2) - 0.5) * 1.8; m.userData.ai[j * 3 + 1] = sp; m.userData.ai[j * 3 + 2] = vrHash(i, 11, 2);
-    // 根元の影: 太陽と反対へ寄せた楕円 (長軸 = 影の向き)
-    const off = Hq * 0.12, cx = v.tx[i] + S0.x * off, cz = v.tz[i] + S0.z * off; terrainAt(cx, cz);
-    Nn.set(v.nx, v.ny, v.nz); X.copy(S0).addScaledVector(Nn, -S0.dot(Nn)).normalize(); Z.crossVectors(X, Nn);
-    const hy = terrainAt(cx, cz) + 0.04, ra = Wq * 0.42, rb = Wq * 0.3;
-    mm.makeBasis(X.clone().multiplyScalar(ra), Nn.clone(), Z.clone().multiplyScalar(rb)); mm.setPosition(cx, hy, cz); bm.setMatrixAt(nb++, mm);
+    const m = meshes[k], j = m.userData.count++, g = m.geometry, P = g.attributes.position.array, V = g.attributes.aV.array, I = g.attributes.aI.array, Tn = g.attributes.aT.array, idx = g.index.array;
+    const sp = vrHash(i, 7, 2) < 0.5 ? 0 : 1, [Hq, Wq] = vrImpSize(i), yo = (vrHash(i, 10, 2) - 0.5) * 1.8;
+    const gg = 0.9 + 0.2 * vrHash(i, 4, 2), h = vrHash(i, 5, 2);
+    if (k === 0) col.setRGB(gg * (0.95 + 0.1 * h), gg, gg * (0.95 + 0.1 * (1 - h))); else col.setRGB(gg * (0.9 + 0.2 * h), gg, gg * (0.86 + 0.18 * (1 - h)));
+    for (let q = 0; q < NV; q++) {
+      const o = j * NV + q;
+      P[o * 3] = v.tx[i]; P[o * 3 + 1] = v.ty[i] - 0.15; P[o * 3 + 2] = v.tz[i];
+      if (q > 0) { V[o * 3] = VR_IMP_DIR[(q - 1) * 2]; V[o * 3 + 1] = VR_IMP_DIR[(q - 1) * 2 + 1]; V[o * 3 + 2] = q; }
+      I[o * 4] = yo; I[o * 4 + 1] = sp; I[o * 4 + 2] = Wq; I[o * 4 + 3] = Hq;
+      Tn[o * 3] = col.r; Tn[o * 3 + 1] = col.g; Tn[o * 3 + 2] = col.b;
+    }
+    for (let q = 0; q < 16; q++) { idx[j * 48 + q * 3] = j * NV; idx[j * 48 + q * 3 + 1] = j * NV + q + 1; idx[j * 48 + q * 3 + 2] = j * NV + (q + 1) % 16 + 1; }
+    m.userData.tree[j] = i;
   }
-  v.nx = sv[0]; v.ny = sv[1]; v.nz = sv[2];
-  for (const m of meshes) { m.instanceMatrix.needsUpdate = true; if (m.instanceColor) m.instanceColor.needsUpdate = true; m.geometry.attributes.aI.needsUpdate = true; m.count = Math.max(0, cnt[meshes.indexOf(m)]); }
-  bm.count = nb; bm.instanceMatrix.needsUpdate = true;
-  v.imp = meshes; v.blobs = bm; for (const m of meshes) v.group.add(m); v.group.add(bm);
-  out.push(...meshes, bm); return out;
+  for (const m of meshes) m.geometry.setDrawRange(0, m.userData.count * 48);
+  v.imp = meshes; for (const m of meshes) v.group.add(m);
+  return meshes.slice();
 }
-/** 足元の草 (v1.4): 十字に交差した 2 枚の板 × 約 2800 個を、操縦位置の近く (中心から約 18 m 以内) に撒く。パッド・操縦位置・パッドへの視線・吹き流しのポールは避ける。
- *  写真は Poly Haven の草 (grass_medium_01) を 4 種、焼いたもの (4 つの区画)。1 ドローコール。縁は alphaToCoverage。配置の乱数は専用 (世界の配置の乱数列は使わない)。 */
+/** 足元の草 (v1.4): 約 2000 株を、操縦位置の近く (中心から約 18 m 以内) に撒く。パッド・操縦位置・パッドへの視線・吹き流しのポールは避ける。
+ *  写真は Poly Haven の草 (grass_medium_01) を 4 種、焼いたもの (4 つの区画)。1 ドローコール。
+ *  ・1 株 = 頭の方を向く 1 枚の板 (写真板と同じ共通の頭の位置。見下ろすと少し後ろへ倒す)。板は区画の中の草の外枠だけ (VR_GRASS_BOX: 透明な所を描かない)。
+ *  ・頭から 22〜32 m で頂点シェーダーの中で大きさ 0 へ縮める (遠くの草は描かない = 塗りが無い)。縁は写真板と同じ (alphaToCoverage / 0.45 で切る)。配置の乱数は専用 (世界の配置の乱数列は使わない)。 */
 const VR_GRASS_CELL = Object.freeze([0.345, 0.234, 0.167, 0.309]);   // 4 種の 1 区画の実寸 [m] (写真の元の草の大きさ)
-const VR_GRASS_VERT = 'attribute vec2 aG;\nvarying vec2 vUv;\nvarying vec3 vTint;\nvarying float vLy;\n#include <fog_pars_vertex>\nvoid main() {\n'
-  + '  vec2 c = vec2( mod( aG.x, 2.0 ), floor( aG.x * 0.5 ) );\n  vUv = vec2( c.x + uv.x, 2.0 - c.y - 1.0 + uv.y ) * 0.5;\n'
-  + '  vTint = instanceColor;\n  vLy = uv.y;\n  vec4 mvPosition = viewMatrix * ( modelMatrix * ( instanceMatrix * vec4( position, 1.0 ) ) );\n'
-  + '  gl_Position = projectionMatrix * mvPosition;\n#include <fog_vertex>\n}';
-const VR_GRASS_FRAG = 'uniform sampler2D uMap;\nvarying vec2 vUv;\nvarying vec3 vTint;\nvarying float vLy;\n#include <common>\n#include <fog_pars_fragment>\nvoid main() {\n'
-  + '  vec4 t = texture2D( uMap, vUv, -0.3 );\n  float a = clamp( ( t.a - 0.45 ) / max( fwidth( t.a ), 0.03 ) + 0.5, 0.0, 1.0 );\n  if ( a < 0.01 ) discard;\n'
-  + '  gl_FragColor = vec4( t.rgb * vTint * ( 1.9 * mix( 0.7, 1.0, smoothstep( 0.0, 0.35, vLy ) ) ), a );\n  #include <colorspace_fragment>\n  #include <fog_fragment>\n}';
+const VR_GRASS_BOX = Object.freeze([[0.0078, 0, 0.9609, 0.4219], [0.0078, 0, 0.875, 0.7578], [0.0586, 0, 0.9844, 0.8398], [0.2305, 0, 0.7305, 0.9922]]);   // 区画の中の草の外枠 (u0, v0, u1, v1。下が 0)
+const VR_GRASS_FADE = Object.freeze([22, 32]);                // 頭からこの距離 [m] で草を縮めて消す
+const VR_GRASS_VERT = [
+  'attribute vec4 aG;', 'attribute vec3 aT;', 'uniform vec3 uHead;', 'varying vec2 vUv;', 'varying vec3 vTint;', 'varying float vLy;',
+  '#include <fog_pars_vertex>',
+  'const vec4 GB[ 4 ] = vec4[ 4 ]( ' + VR_GRASS_BOX.map((b) => 'vec4( ' + b.map((x) => x.toFixed(4)).join(', ') + ' )').join(', ') + ' );',
+  'void main() {',
+  '  float vi = mod( aG.z, 4.0 );', '  vec4 b = GB[ int( vi + 0.5 ) ];', '  vec2 q = mix( b.xy, b.zw, aG.xy );',
+  '  vec3 base = position;', '  float cw = aG.w;',
+  '  vec3 toC = uHead - base;', '  float L = length( toC.xz );', '  vec2 d = L > 1e-3 ? toC.xz / L : vec2( 1.0, 0.0 );',
+  '  float s = cw * ( 1.0 - smoothstep( ' + VR_GRASS_FADE[0].toFixed(1) + ', ' + VR_GRASS_FADE[1].toFixed(1) + ', length( toC ) ) );',
+  '  float LL = max( L, 0.5 ), th = clamp( toC.y / ( sqrt( toC.y * toC.y + LL * LL ) + LL ), 0.0, 0.6841 );',   // 見下ろす角の半分 (最大 0.6 rad) の tan
+  '  vec3 right = vec3( d.y, 0.0, - d.x ) * ( aG.z > 3.5 ? -1.0 : 1.0 );', '  vec3 up = vec3( - d.x * th, 1.0, - d.y * th ) * inversesqrt( 1.0 + th * th );',
+  '  vec3 wp = base + ( right * ( q.x - 0.5 ) + up * q.y ) * s;',
+  '  vec2 c = vec2( mod( vi, 2.0 ), floor( vi * 0.5 ) );', '  vUv = vec2( c.x + q.x, 1.0 - c.y + q.y ) * 0.5;',
+  '  vTint = aT;', '  vLy = q.y;',
+  '  vec4 mvPosition = viewMatrix * vec4( wp, 1.0 );', '  gl_Position = projectionMatrix * mvPosition;',
+  '#include <fog_vertex>', '}'].join('\n');
+const VR_GRASS_FRAG = [
+  'uniform sampler2D uMap;', 'uniform float uHard;', 'varying vec2 vUv;', 'varying vec3 vTint;', 'varying float vLy;',
+  '#include <common>', '#include <fog_pars_fragment>',
+  'void main() {',
+  '  vec4 t = texture2D( uMap, vUv, -0.3 );',
+  '#ifdef ALPHA_TO_COVERAGE',                                                 // (alphaToCoverage の変種だけ: 縁を fwidth で締めた被覆。描き先がマルチサンプルでない時は uHard = 1 で切る)
+  '  float a = uHard > 0.5 ? step( 0.45, t.a ) : clamp( ( t.a - 0.45 ) / max( fwidth( t.a ), 0.03 ) + 0.5, 0.0, 1.0 );',
+  '#else',
+  '  float a = step( 0.45, t.a );',
+  '#endif',
+  '  if ( a < 0.01 ) discard;',
+  '  gl_FragColor = vec4( t.rgb * vTint * ( 1.9 * mix( 0.7, 1.0, smoothstep( 0.0, 0.35, vLy ) ) ), a );',
+  '  #include <colorspace_fragment>', '  #include <fog_fragment>', '}'].join('\n');
 function vrBuildGrass() {
-  const v = vrw, S = C.VR_SIZE, N = 2800, R = 18, rnd = vrRng(C.VR_SEED + 55), sv = [v.nx, v.ny, v.nz];
+  const v = vrw, N = VR_GRASS_N, R = 18, rnd = vrRng(C.VR_SEED + 55), sv = [v.nx, v.ny, v.nz];
   const keep = [];                                             // 避ける所: [x, z, 半径] (円) と [x0, z0, x1, z1, 半径] (線分)
-  const pd = v.pads, pil = [];
+  const pd = v.pads;
   for (let s = 0; s < C.NET_SLOTS; s++) {
     const px = pd[s * 2], pz = pd[s * 2 + 1], l = Math.hypot(px, pz) || 1, qx = px + px / l * C.VR_PILOT_BACK, qz = pz + pz / l * C.VR_PILOT_BACK;
     keep.push([px, pz, px, pz, VR_PAD_RAD + 0.9]); keep.push([px, pz, qx, qz, 1.1]); keep.push([qx, qz, qx, qz, 1.2]);
   }
   for (let i = 0; i < C.NAT_SOCK_N; i++) if (nat.sockPos) keep.push([nat.sockPos[i * 3], nat.sockPos[i * 3 + 2], nat.sockPos[i * 3], nat.sockPos[i * 3 + 2], 0.7]);
   const near = (x, z) => { for (let i = 0; i < keep.length; i++) { const k = keep[i], dx = k[2] - k[0], dz = k[3] - k[1], l2 = dx * dx + dz * dz; let t = l2 > 0 ? ((x - k[0]) * dx + (z - k[1]) * dz) / l2 : 0; t = t < 0 ? 0 : t > 1 ? 1 : t; const ex = x - (k[0] + dx * t), ez = z - (k[1] + dz * t); if (ex * ex + ez * ez < k[4] * k[4]) return true; } return false; };
-  const g = new THREE.BufferGeometry(), pos = new Float32Array([-1, 0, 0, 1, 0, 0, 1, 2, 0, -1, 2, 0, 0, 0, -1, 0, 0, 1, 0, 2, 1, 0, 2, -1]);   // 2 枚 (x 方向と z 方向)。幅 2 × 高さ 2 (正方形の区画)
-  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1]), 2)); g.setIndex([0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7]);
-  const ag = new Float32Array(N * 2), m = new THREE.InstancedMesh(g, new THREE.ShaderMaterial({ uniforms: Object.assign(THREE.UniformsUtils.merge([THREE.UniformsLib.fog]), { uMap: { value: vrPhoto.tex.cards } }), vertexShader: VR_GRASS_VERT, fragmentShader: VR_GRASS_FRAG, fog: true, alphaToCoverage: true, blending: THREE.CustomBlending, blendSrc: THREE.OneFactor, blendDst: THREE.ZeroFactor, blendEquation: THREE.AddEquation, blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor, blendEquationAlpha: THREE.AddEquation, side: THREE.DoubleSide }), N);
-  g.setAttribute('aG', new THREE.InstancedBufferAttribute(ag, 2));
-  const mm = new THREE.Matrix4(), qq = new THREE.Quaternion(), pp = new THREE.Vector3(), ss = new THREE.Vector3(), col = new THREE.Color();
+  // 1 つの形状にまとめる (1 株 = 4 頂点・2 三角形)。position = 株の根元 / aG = (隅 x, 隅 y, 種 0..3 + 左右反転 4, 板の大きさ cw) / aT = 色合い。形と uv は頂点シェーダーが外枠から作る
+  const P = new Float32Array(N * 12), G = new Float32Array(N * 16), Tn = new Float32Array(N * 12), idx = new Uint32Array(N * 6), inst = new Float32Array(N * 5), col = new THREE.Color();
   let n = 0, tries = 0;
   while (n < N && tries < N * 40) {
     tries++;
@@ -2173,15 +2354,23 @@ function vrBuildGrass() {
     if (vrFbm(x / 5, z / 5, 2, 301) < 0.30 && e < 0.7) continue;   // むらを持たせる: 草の薄い所
     if (near(x, z)) continue;
     const h = terrainAt(x, z); if (h < C.VR_WATER_Y + 1.4) continue;
-    const vi = q < 0.34 ? 0 : q < 0.62 ? 1 : q < 0.9 ? 2 : 3, sc = (2.1 + 1.3 * f) * (0.6 + 0.4 * fade), cw = VR_GRASS_CELL[vi] * sc;
-    qq.setFromAxisAngle(Y_AXIS, rnd() * 6.2832); mm.compose(pp.set(x, h - 0.02, z), qq, ss.set(cw * 0.5, cw * 0.5, cw * 0.5));   // 板は 幅 = 高さ = cw
-    m.setMatrixAt(n, mm);
+    const vi = q < 0.34 ? 0 : q < 0.62 ? 1 : q < 0.9 ? 2 : 3, sc = (2.1 + 1.3 * f) * (0.6 + 0.4 * fade), cw = VR_GRASS_CELL[vi] * sc, flip = rnd() * 6.2832 > 3.1416 ? 4 : 0;   // 板は 幅 = 高さ = cw (向きは描く時に頭へ)。(以前の向きの乱数 = 左右反転に使う: 乱数列は以前と同じ)
     const b = 0.85 + 0.4 * rnd(), y = rnd(); col.setRGB(b * (0.9 + 0.25 * y), b * 1.0, b * (0.8 - 0.2 * y));   // 明暗・黄緑〜緑のずれ
-    m.setColorAt(n, col); ag[n * 2] = vi; ag[n * 2 + 1] = 0; n++;
+    for (let c = 0; c < 4; c++) {
+      const o = n * 4 + c;
+      P[o * 3] = x; P[o * 3 + 1] = h - 0.02; P[o * 3 + 2] = z;
+      G[o * 4] = c === 1 || c === 2 ? 1 : 0; G[o * 4 + 1] = c >= 2 ? 1 : 0; G[o * 4 + 2] = vi + flip; G[o * 4 + 3] = cw;
+      Tn[o * 3] = col.r; Tn[o * 3 + 1] = col.g; Tn[o * 3 + 2] = col.b;
+    }
+    idx.set([n * 4, n * 4 + 1, n * 4 + 2, n * 4, n * 4 + 2, n * 4 + 3], n * 6);
+    inst.set([x, h - 0.02, z, cw, vi], n * 5); n++;
   }
   v.nx = sv[0]; v.ny = sv[1]; v.nz = sv[2];
-  m.count = n; m.instanceMatrix.needsUpdate = true; m.instanceColor.needsUpdate = true; g.attributes.aG.needsUpdate = true;
-  m.frustumCulled = false; m.visible = false; m.name = 'vrGrass'; v.grass = m; v.nGrass = n; v.group.add(m);
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(P, 3)); g.setAttribute('aG', new THREE.BufferAttribute(G, 4)); g.setAttribute('aT', new THREE.BufferAttribute(Tn, 3)); g.setIndex(new THREE.BufferAttribute(idx, 1)); g.setDrawRange(0, n * 6);
+  const mats = vrBillMats({ uniforms: Object.assign(THREE.UniformsUtils.merge([THREE.UniformsLib.fog]), { uMap: { value: vrPhoto.tex.cards }, uHead: vrBill.head, uHard: vrBill.hard }), vertexShader: VR_GRASS_VERT, fragmentShader: VR_GRASS_FRAG });
+  const m = new THREE.Mesh(g, mats[vrBillA2C() ? 1 : 0]); m.userData.mats = mats;
+  m.frustumCulled = false; m.visible = false; m.name = 'vrGrass'; m.onBeforeRender = vrBillboardBefore; m.renderOrder = VR_BILL_ORDER; m.userData.count = n; m.userData.inst = inst.subarray(0, n * 5);   // (inst: 株ごとの x, y, z, 大きさ, 種。検証用)
+  v.grass = m; v.nGrass = n; v.group.add(m);
   return [m];
 }
 /** 地形 (写真): 取得 2 回 = 草 (層 0) + 面ごとの 1 層 (aO.x: 1 牧草 / 2 砂 / 3 岩)。色 = 草 × aTA + その層 × aTB (面ごとの倍率。大きな色むらと明るさを含む)。
@@ -2189,14 +2378,14 @@ function vrBuildGrass() {
 function vrTerrainPhotoMat() {
   const m = new THREE.MeshLambertMaterial(), tex = vrPhoto.tex.ground;
   m.onBeforeCompile = (sh) => {
-    sh.uniforms.uGnd = { value: tex };
-    sh.vertexShader = 'attribute vec3 aO;\nattribute vec3 aTA;\nattribute vec3 aTB;\nvarying vec2 vU1;\nvarying vec3 vU2;\nvarying vec3 vTA;\nvarying vec3 vTB;\n'
-      + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vU1 = position.xz * 0.32; vU2 = vec3( mix( position.xz * aO.y, vec2( position.x + position.z, position.y * 1.4 ) * 0.2, aO.z ), aO.x ); vTA = aTA; vTB = aTB;');
-    sh.fragmentShader = 'uniform highp sampler2DArray uGnd;\nvarying vec2 vU1;\nvarying vec3 vU2;\nvarying vec3 vTA;\nvarying vec3 vTB;\nfloat vh( vec2 p ) { vec3 p3 = fract( vec3( p.xyx ) * 0.1031 ); p3 += dot( p3, p3.yzx + 33.33 ); return fract( ( p3.x + p3.y ) * p3.z ); }\nfloat vn( vec2 p ) { vec2 i = floor( p ), f = fract( p ); f = f * f * ( 3.0 - 2.0 * f ); return mix( mix( vh( i ), vh( i + vec2( 1.0, 0.0 ) ), f.x ), mix( vh( i + vec2( 0.0, 1.0 ) ), vh( i + vec2( 1.0, 1.0 ) ), f.x ), f.y ); }\n'
-      + sh.fragmentShader.replace('#include <color_fragment>', 'vec3 cA = texture( uGnd, vec3( vU1, 0.0 ) ).rgb, cB = texture( uGnd, vU2 ).rgb;\n'
-        + '  vec2 wp = vU1 * 3.125;\n  float k = vn( wp * 0.11 ) * 0.62 + vn( wp * 0.43 + 7.0 ) * 0.38 - 0.5;\n'          // v1.4: 画素ごとの低周波のむら = 土の斑 (別の層を強め、草を弱める) と 大きな明暗
-        + '  vec3 c = cA * vTA * ( 1.0 - k * 0.8 ) + cB * vTB * ( 1.0 + k * 1.8 );\n  c *= ( 0.84 + 0.3 * vn( wp * 0.035 ) ) * mix( vec3( 0.84, 0.97, 0.82 ), vec3( 1.06, 1.0, 0.86 ), vn( wp * 0.016 + 3.0 ) );\n'
-        + '  float l = dot( c, vec3( 0.3333 ) );\n  c *= pow( max( l, 0.001 ) / 0.12, 0.2 );\n  diffuseColor.rgb = c;');
+    sh.uniforms.uGnd = { value: tex }; sh.uniforms.uGW = { value: vrPhoto.tex.gw }; sh.uniforms.uShadow = vrPhoto.uShadow;
+    sh.vertexShader = 'attribute vec3 aO;\nattribute vec3 aTA;\nattribute vec3 aTB;\nvarying vec2 vU1;\nvarying vec3 vU2;\nvarying vec3 vTA;\nvarying vec3 vTB;\nvarying vec2 vW;\n'
+      + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vU1 = position.xz * 0.32; vU2 = vec3( mix( position.xz * aO.y, vec2( position.x + position.z, position.y * 1.4 ) * 0.2, aO.z ), aO.x ); vTA = aTA; vTB = aTB; vW = position.xz * ' + (1 / C.VR_SIZE).toFixed(8) + ' + 0.5;');
+    sh.fragmentShader = 'uniform highp sampler2DArray uGnd;\nuniform sampler2D uGW;\nuniform float uShadow;\nvarying vec2 vU1;\nvarying vec3 vU2;\nvarying vec3 vTA;\nvarying vec3 vTB;\nvarying vec2 vW;\n'
+      + sh.fragmentShader.replace('#include <color_fragment>', 'vec3 cA = texture( uGnd, vec3( vU1, 0.0 ) ).rgb, cB = texture( uGnd, vU2 ).rgb;\n  vec4 w = texture( uGW, vW );\n'
+        + '  float k = w.g * 0.62 + w.b * 0.38 - 0.5;\n'          // v1.4: 低周波のむら = 土の斑 (別の層を強め、草を弱める)。世界の画像の緑・青 (vrGroundNoise)。大きな明暗・色合いは aTA / aTB に含めてある
+        + '  vec3 c = cA * vTA * ( 1.0 - k * 0.8 ) + cB * vTB * ( 1.0 + k * 1.8 );\n'
+        + '  float l = dot( c, vec3( 0.3333 ) );\n  c *= pow( max( l, 0.001 ) / 0.12, 0.2 ) * mix( 1.0, w.r, uShadow );\n  diffuseColor.rgb = c;');   // 赤 = 木の根元の影 (vrStampShadows)
   };
   m.customProgramCacheKey = () => 'vrTerrainPhoto';
   return m;
@@ -2235,14 +2424,30 @@ function vrSkyPhotoMat() {
   return new THREE.ShaderMaterial({
     uniforms: { uSky: { value: vrPhoto.tex.sky }, uSkyRot: vrPhoto.uSkyRot, uSkyFog: vrPhoto.uSkyFog },
     vertexShader: 'uniform float uSkyRot;\nvarying vec2 vUv;\nvarying float vFog;\nvoid main() {\n'
-      + '  vUv = vec2( 0.25 - uv.x + uSkyRot, 1.0 - ( 1.0 - uv.y ) * 1.7777778 );\n'      // 方位: atan(x,-z)/2π + 0.5 と同じ向き / 仰角: 天頂 → 写真の上端, 101.25° 下 → 下端 (下は端の画素のまま)
+      + '  float vf = 1.0 - acos( clamp( position.y, -1.0, 1.0 ) ) * 0.31830989;\n'          // 天頂 1 → 真下 0 (球の一部だけの形状でも、全球の uv.y と同じ値)
+      + '  vUv = vec2( 0.25 - uv.x + uSkyRot, 1.0 - ( 1.0 - vf ) * 1.7777778 );\n'      // 方位: atan(x,-z)/2π + 0.5 と同じ向き / 仰角: 天頂 → 写真の上端, 101.25° 下 → 下端 (下は端の画素のまま)
       + '  vFog = 1.0 - smoothstep( -0.215, -0.17, position.y );\n'                           // 地平線の下は霧の色へ
       + '  vec4 c = projectionMatrix * modelViewMatrix * vec4( position * 400.0, 1.0 );\n  gl_Position = vec4( c.xy, c.w * 0.99999, c.w );\n}',
     fragmentShader: '#include <common>\n#include <dithering_pars_fragment>\nuniform sampler2D uSky; uniform vec3 uSkyFog; varying vec2 vUv; varying float vFog;\n'
       + 'void main() {\n  gl_FragColor = vec4( mix( texture2D( uSky, vUv ).rgb, uSkyFog, vFog ), 1.0 );\n'
       + '  #include <tonemapping_fragment>\n  #include <colorspace_fragment>\n  #include <dithering_fragment>\n  gl_FragColor.a = 1.0;\n}',
-    side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false, dithering: true,
+    side: THREE.BackSide, depthWrite: false, depthTest: true, fog: false, dithering: true,   // (描く順と深度テスト: vrBuildSky の VR_SKY_ORDER)
   });
+}
+/** 空 (写真) の形状は、天頂から地平線の 12.7° 下 (y = -0.22) までの球の一部 (64 × 28)。そこより下は霧の色だけ (写真を読まない) なので、
+ *  別の安い材質の「底」(vrSkyCapMesh。空の子) で塗る: 地形の裏側になる画面の下半分で、空の画像を読む画素を減らす (全画面を塗る空の手間の約 4 割)。 */
+const VR_SKY_CUT = Math.acos(-0.22);
+function vrSkyPhotoGeo() { return new THREE.SphereGeometry(1, 64, 28, 0, Math.PI * 2, 0, VR_SKY_CUT); }
+function vrSkyCapMesh() {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 4, 0, Math.PI * 2, VR_SKY_CUT - 0.02, Math.PI - VR_SKY_CUT + 0.02), new THREE.ShaderMaterial({
+    uniforms: { uSkyFog: vrPhoto.uSkyFog },
+    vertexShader: 'void main() {\n  vec4 c = projectionMatrix * modelViewMatrix * vec4( position * 400.0, 1.0 );\n  gl_Position = vec4( c.xy, c.w * 0.99999, c.w );\n}',
+    fragmentShader: '#include <common>\n#include <dithering_pars_fragment>\nuniform vec3 uSkyFog;\nvoid main() {\n  gl_FragColor = vec4( uSkyFog, 1.0 );\n'
+      + '  #include <tonemapping_fragment>\n  #include <colorspace_fragment>\n  #include <dithering_fragment>\n  gl_FragColor.a = 1.0;\n}',
+    side: THREE.BackSide, depthWrite: false, depthTest: true, fog: false, dithering: true,
+  }));
+  m.renderOrder = VR_SKY_ORDER; m.frustumCulled = false; m.name = 'vrSkyCap'; m.visible = false;
+  return m;
 }
 
 function vrBuildSky() {
@@ -2258,12 +2463,18 @@ function vrBuildSky() {
       + '  col += uSunCol * ( pow( sd, 5.0 ) * 0.16 + pow( sd, 40.0 ) * 0.30 );\n'
       + '  col = mix( col, uSunCol * 1.6, smoothstep( 0.9993, 0.9996, sd ) );\n'
       + '  gl_FragColor = vec4( col, 1.0 );\n  #include <tonemapping_fragment>\n  #include <colorspace_fragment>\n  #include <dithering_fragment>\n  gl_FragColor.a = 1.0;\n}',
-    side: THREE.BackSide, depthWrite: false, depthTest: false, fog: false, dithering: true,   // dithering: 8bit出力でのなだらかな空の縞 (バンディング) を崩す。alpha は必ず 1 (パススルーを完全に覆う)
+    side: THREE.BackSide, depthWrite: false, depthTest: true, fog: false, dithering: true,   // dithering: 8bit出力でのなだらかな空の縞 (バンディング) を崩す。alpha は必ず 1 (パススルーを完全に覆う)
   });
   const m = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), mat);
-  m.renderOrder = -1000; m.frustumCulled = false; m.name = 'vrSky';
+  m.renderOrder = VR_SKY_ORDER; m.frustumCulled = false; m.name = 'vrSky';
   return m;
 }
+/** 自然の世界の描く順 (不透明のパスの中): 地形・岩・パッドなど (0) → 空 (VR_SKY_ORDER) → 木の写真板・草 (VR_BILL_ORDER) → 半透明のパス。
+ *  ・空は遠い面 (z = 0.99999 w) に置き、深度テストあり (書き込みなし): 何も描かれていない画素だけを塗る (v1.4 の最初までは最初に全画面を塗り、地形が上から塗り直していた = 画素の処理が 2 倍)。
+ *    遠方が切られても (深度センサーの範囲の強制など) 空が残りを全部覆う (深度は消去値の 1.0 のまま = 空が通る)。
+ *  ・写真板・草はアルファを書かない (下の画素のアルファのまま) ので、空の後に描く: 下は必ず地形か空 (アルファ 1) = immersive-ar でパススルーが透けない
+ *    (immersive-ar の alpha-blend では three が消去のアルファを 0 にするので、アルファ 1 を書くのは不透明の物と空だけ)。 */
+const VR_SKY_ORDER = 500, VR_BILL_ORDER = 600;
 
 function vrBuildWorld() {
   if (vrw.built) return;
@@ -2322,6 +2533,8 @@ function vrBuildWorld() {
     }
   }
   const vnorm = (x, z) => { const ix = Math.max(0, Math.min(N, Math.round((x + half) / cs))), iz = Math.max(0, Math.min(N, Math.round((z + half) / cs))), il = Math.max(0, ix - 1), ir = Math.min(N, ix + 1), iu = Math.max(0, iz - 1), id = Math.min(N, iz + 1); const dx = (H[iz * W + ir] - H[iz * W + il]) / ((ir - il) * cs), dz = (H[id * W + ix] - H[iu * W + ix]) / ((id - iu) * cs), l = Math.sqrt(dx * dx + 1 + dz * dz); return [-dx / l, 1 / l, -dz / l]; };
+  const gvC = new Float32Array(W * W * 3).fill(-1), gvO = [0, 0, 0];
+  const vgv = (x, z) => { const ix = Math.round((x + half) / cs), iz = Math.round((z + half) / cs), o = (iz * W + ix) * 3; if (gvC[o] < 0) { const b = 0.84 + 0.3 * vrVn(x * 0.035, z * 0.035), t = vrVn(x * 0.016 + 3, z * 0.016 + 3); gvC[o] = b * (0.84 + 0.22 * t); gvC[o + 1] = b * (0.97 + 0.03 * t); gvC[o + 2] = b * (0.82 + 0.04 * t); } gvO[0] = gvC[o]; gvO[1] = gvC[o + 1]; gvO[2] = gvC[o + 2]; return gvO; };   // 格子点ごと (隣の三角形と同じ値)
   const nt = N * N * 2, P = new Float32Array(nt * 9), NN = new Float32Array(nt * 9), K = new Float32Array(nt * 9), AO = new Float32Array(nt * 9), ATA = new Float32Array(nt * 9), ATB = new Float32Array(nt * 9);   // 写真の地面用 (従来の見た目では使わない。vrTerrainPhotoMat): AO = (2 つ目の層, その縮尺, 急斜面) / ATA, ATB = 草・その層の色の倍率 (面ごと)
   const cSand = new THREE.Color(0xd2c48c), cG1 = new THREE.Color(0x5aa636), cG2 = new THREE.Color(0x86b94a), cDry = new THREE.Color(0xb9ad5f), cRock = new THREE.Color(0x8f8e88), cAlp = new THREE.Color(0x9aa39c), cSnow = new THREE.Color(0xf3f6f9), cc = new THREE.Color();
   let o = 0;
@@ -2357,8 +2570,8 @@ function vrBuildWorld() {
         ta0 = gw * f(0, 1) * T0; ta1 = gw * f(1, 1.02) * T1; ta2 = gw * f(2, 0.9) * T2;
         tb0 = b * wR * 0.66; tb1 = b * wR * 0.66; tb2 = b * wR * 0.66;
       } else { ta0 = (1 - wm) * T0; ta1 = (1 - wm) * 1.02 * T1; ta2 = (1 - wm) * 0.9 * T2; tb0 = wm * 2.6 * T0; tb1 = wm * 2.9 * T1; tb2 = wm * 3.4 * T2; }
-      const q = o + k * 3;
-      AO[q] = L; AO[q + 1] = sc; AO[q + 2] = L === 3 ? side : 0; ATA[q] = ta0; ATA[q + 1] = ta1; ATA[q + 2] = ta2; ATB[q] = tb0; ATB[q + 1] = tb1; ATB[q + 2] = tb2;
+      const q = o + k * 3, gv = vgv(x, z);                    // 大きな明暗 × 色合い (v1.4 の最初は画素ごとの値ノイズ。周期 28 m / 62 m なので頂点で十分)
+      AO[q] = L; AO[q + 1] = sc; AO[q + 2] = L === 3 ? side : 0; ATA[q] = ta0 * gv[0]; ATA[q + 1] = ta1 * gv[1]; ATA[q + 2] = ta2 * gv[2]; ATB[q] = tb0 * gv[0]; ATB[q + 1] = tb1 * gv[1]; ATB[q + 2] = tb2 * gv[2];
       NN[o + k * 3] = vn[0]; NN[o + k * 3 + 1] = vn[1]; NN[o + k * 3 + 2] = vn[2];   // v1.4: 描画の法線は頂点ごとの滑らかな法線
       K[o + k * 3] = cc.r * b; K[o + k * 3 + 1] = cc.g * b; K[o + k * 3 + 2] = cc.b * b;
     }
@@ -2876,7 +3089,7 @@ function vrSceneLook(w) {
     const cw = id === 1 ? vrw : exw;
     if (!cw.compiled) {                                       // 霧あり・VR照明のシェーダー変種を先に作る (初回の切替の暗転中に払う)
       cw.compiled = true; const t0 = performance.now();
-      try { renderer.compile(scene, camera); } catch (e) { /* 初回描画時に作られる */ }
+      try { renderer.compile(scene, camera); if (id === 1) renderer.compile(vrBillCompileScene([...(vrw.imp || []), vrw.grass], new THREE.Scene()), camera, scene); } catch (e) { /* 初回描画時に作られる */ }   // (写真板・草: 使っていない方の変種も = XR の開始・終了で切り替わってもコンパイルしない)
       cw.compileMs = performance.now() - t0;
     }
   } else {
@@ -3270,6 +3483,7 @@ function natClouds(dt) {
 function natFrame(dt, now, spectator) {
   if (!vrw.built || !vrw.socks || nat.fxOff) return;
   vrPhotoPump();                                              // 写真素材: 1フレームに1枚だけ GPU へ転送 (例外は中で止める)
+  vrBillSelect();                                             // 写真板・草: 縁の切り方 (XR のマルチサンプルの時だけ alphaToCoverage)
   try { natFrameBody(dt, now, spectator); } catch (e) { nat.fxOff = true; nat.fxErr = String(e); }   // 見た目だけの更新。万一の例外で VR を落とさない (以後この更新だけ止める。飛行・風の物理は続く)
 }
 function natFrameBody(dt, now, spectator) {
@@ -9084,7 +9298,7 @@ if (DEBUG) {
     stepSim, collide, updatePlanes, recomputeRoom, readXRInputs, placeHud, updateHeadXR, pickWaypoint, behindWall, surfaceHeightAt, surfaceClearance,
     toggleFlight, toggleMode, toggleHud, toggleMonitor, setMonitor, renderMonitor, updateFpvCamera, syncRoomModel, rebuildRoomModel, roomModelStale, resetWorld, placeDroneInitial, initAudio, stopAudio, frame,
     // --- 自然の位置安定・風 ---
-    comfort, comfortSet, comfortActive, comfortAttiScale, natViewYaw, vrPhoto, vrPhotoLoad, vrPhotoPump, vrPhotoLine, vrPhotoMask, vrPhotoState, VR_SUN_PHOTO, VR_PAD_RAD, VR_IMP_SPEC,
+    comfort, comfortSet, comfortActive, comfortAttiScale, natViewYaw, vrPhoto, vrPhotoLoad, vrPhotoPump, vrPhotoLine, vrPhotoMask, vrPhotoState, VR_SUN_PHOTO, VR_PAD_RAD, VR_IMP_SPEC, VR_IMP_R, VR_IMP_DIR, VR_IMP_C, VR_GRASS_BOX, VR_GRASS_FADE, VR_GW_N, vrBill, vrBillboardBefore, VR_SKY_ORDER, VR_BILL_ORDER, vrBillA2C, vrBillSelect, vrImpSize, vrStampShadows, vrVn,
     nat, natWindAt, natFrame, natPre, natSetSeed, natReseed, natSetHold, natToggleAtti, natCycleWind, natEnter, natSocks, natClouds, natHudSig, natWindRel, natNote, recallOk, attiNow, windVelStep, landHere, drawHudNatStrip, drawHudNat, windUpdate,
     // --- 試験場 ---
     ex, exw, EX_COURSES, EX_ITEMS, EX_TXT, TX, EXP, EX_PASS, EX_RUN, EX_ATL, exDump, exCellPos, exOrigin, exOwnSlot, exPlan, exRestart, exEnter, exLeave, exStep, exZone, exZoneRaw, exWindAt, exSetWind, exCycleWind, exSpeak, exJudgeFail, vrRigResnap, exArmToggle, exCycleItem, exToggleHold, exToggleDisp, exRestartHold, exDemoToggle, exDemoStop, exSyncCells, exDrawHud, exBoardData, exBoardTick, exFrame, exAtti, exInstr, exRem, exDemoCommands, exBuildWorld, exAvatar, exTxId, exHudSig, exPlaceAtHome, exResetDrone, exLanded, exYBtn, exY, exLTrig, exL, exSetItem, exFinish, exTrigger, exBegin, exDone, EX_RES_NAME, pilotScaleUpdate, worldId, vrPilotSpot, vrRigPilot, exPost, exPre, exFault, exFail, exBestAll, exTopFaults, exRunLine, exSay, exAnnounce, exToast, exApplyDisp, exCapUpdate, exBoardDraw, exBestSave, EX_VOICE, exSolo() { return net.on; },
